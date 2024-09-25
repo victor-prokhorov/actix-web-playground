@@ -1,3 +1,4 @@
+use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use serde::Deserialize;
 use std::sync::Mutex;
@@ -31,6 +32,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(shared_data.clone())
+            .wrap(Cors::default().allowed_origin("http://127.0.0.1:3000"))
             .route("/signup", web::post().to(signup))
     })
     .bind("127.0.0.1:3001")?
