@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use serde::Deserialize;
 use std::sync::Mutex;
 
@@ -14,6 +14,7 @@ struct AppState {
 }
 
 async fn signup(user: web::Form<User>, data: web::Data<AppState>) -> impl Responder {
+    dbg!(&user);
     let mut users = data.users.lock().unwrap();
     users.push(User {
         username: user.username.clone(),
@@ -26,16 +27,19 @@ async fn signup(user: web::Form<User>, data: web::Data<AppState>) -> impl Respon
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     let shared_data = web::Data::new(AppState {
         users: Mutex::new(Vec::new()),
     });
+    let config = common::load_rustls_config();
     HttpServer::new(move || {
         App::new()
             .app_data(shared_data.clone())
             .wrap(Cors::default().allowed_origin("https://127.0.0.1:3000"))
             .route("/signup", web::post().to(signup))
+            .wrap(Logger::default())
     })
-    .bind("127.0.0.1:3001")?
+    .bind_rustls_0_23(("127.0.0.1", 3001), config)?
     .run()
     .await
 }

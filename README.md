@@ -10,3 +10,8 @@ curl http://127.0.0.1:3001/signup \
 curl -v https://127.0.0.1:3000/index.html --compressed -k
 # -k is shorthand for --insecure
 ```
+```sh
+curl -v https://127.0.0.1:3001/signup \
+    -d "username=username&password=password" \
+    --cacert ./cert.pem 
+```
