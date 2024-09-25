@@ -15,3 +15,6 @@ curl -v https://127.0.0.1:3001/signup \
     -d "username=username&password=password" \
     --cacert ./cert.pem 
 ```
+- mTLS seems also possible
+- [PR](https://github.com/actix/actix-web/issues/1727)
+- [implementation example](https://github.com/actix/examples/blob/master/https-tls/rustls-client-cert/src/main.rs)

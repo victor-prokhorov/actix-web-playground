@@ -14,15 +14,27 @@ struct AppState {
 }
 
 async fn signup(user: web::Form<User>, data: web::Data<AppState>) -> impl Responder {
-    dbg!(&user);
     let mut users = data.users.lock().unwrap();
     users.push(User {
         username: user.username.clone(),
         password: user.password.clone(),
     });
     HttpResponse::Found()
-        .append_header(("LOCATION", "https://127.0.0.1:3000/login.html")) // Change "/success" to your desired path
+        .append_header(("LOCATION", "https://127.0.0.1:3000/login.html"))
         .finish()
+}
+
+async fn login(user: web::Form<User>, data: web::Data<AppState>) -> impl Responder {
+    let users = data.users.lock().unwrap();
+    if let Some(_) = users.iter().find(|User { username, password }| {
+        *username == user.username && *password == user.password
+    }) {
+        HttpResponse::Found()
+            .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
+            .finish()
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
 }
 
 #[actix_web::main]
@@ -37,6 +49,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(shared_data.clone())
             .wrap(Cors::default().allowed_origin("https://127.0.0.1:3000"))
             .route("/signup", web::post().to(signup))
+            .route("/login", web::post().to(login))
             .wrap(Logger::default())
     })
     .bind_rustls_0_23(("127.0.0.1", 3001), config)?
