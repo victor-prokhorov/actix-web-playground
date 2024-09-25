@@ -2,9 +2,16 @@ use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use serde::Deserialize;
 use std::sync::Mutex;
+use uuid::Uuid;
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
+struct UserInput {
+    username: String,
+    password: String,
+}
+
 struct User {
+    id: Uuid,
     username: String,
     password: String,
 }
@@ -13,22 +20,27 @@ struct AppState {
     users: Mutex<Vec<User>>,
 }
 
-async fn signup(user: web::Form<User>, data: web::Data<AppState>) -> impl Responder {
+async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> impl Responder {
     let mut users = data.users.lock().unwrap();
+    let id = uuid::Uuid::new_v4();
     users.push(User {
-        username: user.username.clone(),
-        password: user.password.clone(),
+        id,
+        username: user_input.username.clone(),
+        password: user_input.password.clone(),
     });
+    tracing::info!("user {} signed", id);
     HttpResponse::Found()
         .append_header(("LOCATION", "https://127.0.0.1:3000/login.html"))
         .finish()
 }
 
-async fn login(user: web::Form<User>, data: web::Data<AppState>) -> impl Responder {
+async fn login(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> impl Responder {
     let users = data.users.lock().unwrap();
-    if let Some(_) = users.iter().find(|User { username, password }| {
-        *username == user.username && *password == user.password
-    }) {
+    if let Some(user) = users
+        .iter()
+        .find(|user| user_input.username == user.username && user_input.password == user.password)
+    {
+        tracing::info!("user {} logged", user.id);
         HttpResponse::Found()
             .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
             .finish()
