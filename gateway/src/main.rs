@@ -14,14 +14,14 @@ struct AppState {
 }
 
 async fn signup(user: web::Form<User>, data: web::Data<AppState>) -> impl Responder {
-    dbg!(&user);
     let mut users = data.users.lock().unwrap();
     users.push(User {
         username: user.username.clone(),
         password: user.password.clone(),
     });
-    dbg!(&users);
-    HttpResponse::Ok().body("user registered successfully")
+    HttpResponse::Found()
+        .append_header(("LOCATION", "http://127.0.0.1:3000/login.html")) // Change "/success" to your desired path
+        .finish()
 }
 
 #[actix_web::main]
