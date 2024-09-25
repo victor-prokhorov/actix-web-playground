@@ -20,7 +20,7 @@ async fn signup(user: web::Form<User>, data: web::Data<AppState>) -> impl Respon
         password: user.password.clone(),
     });
     HttpResponse::Found()
-        .append_header(("LOCATION", "http://127.0.0.1:3000/login.html")) // Change "/success" to your desired path
+        .append_header(("LOCATION", "https://127.0.0.1:3000/login.html")) // Change "/success" to your desired path
         .finish()
 }
 
@@ -32,7 +32,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(shared_data.clone())
-            .wrap(Cors::default().allowed_origin("http://127.0.0.1:3000"))
+            .wrap(Cors::default().allowed_origin("https://127.0.0.1:3000"))
             .route("/signup", web::post().to(signup))
     })
     .bind("127.0.0.1:3001")?
