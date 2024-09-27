@@ -4,6 +4,7 @@ use actix_web::{
     middleware::Logger,
     web, App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
+use bcrypt::{hash, verify, DEFAULT_COST};
 use core::fmt;
 use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
@@ -49,10 +50,12 @@ async fn signup(
     app_data: web::Data<AppData>,
 ) -> Result<HttpResponse, Error> {
     let id = Uuid::new_v4();
+    let password = hash(user_input.password.clone(), DEFAULT_COST)
+        .map_err(|err| Error::ImpossibleToAddUser(err.into()))?;
     let user = User {
         id,
         username: user_input.username.clone(),
-        password: user_input.password.clone(),
+        password,
     };
     try_insert_new_user(&app_data.pool, user).await?;
     Ok(HttpResponse::SeeOther()
@@ -71,15 +74,14 @@ async fn try_insert_new_user(pool: &PgPool, user: User) -> Result<(), Error> {
     .await
     {
         Err(err) => {
-            tracing::error!("{err:?}");
-            if let Some(dberr) = err.into_database_error() {
+            if let Some(dberr) = err.as_database_error() {
                 if let Some(constraint) = dberr.constraint() {
                     if constraint == "users_username_key" {
                         return Err(Error::UserWithSameNameExists);
                     }
                 }
             }
-            Err(Error::ImpossibleToAddUser)
+            Err(Error::ImpossibleToAddUser(err.into()))
         }
         Ok(query_result) => {
             tracing::info!("{query_result:?}");
@@ -93,40 +95,47 @@ async fn login(
     app_data: web::Data<AppData>,
 ) -> Result<HttpResponse, Error> {
     let user_input = user_input.into_inner();
-    let user = find_user(&app_data.pool, &user_input).await?;
-    tracing::info!("user {} logged", user.id);
-    let expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
-    let access_token = generate_token(user.id, expiration_time, &app_data.access_token_secret);
-    let refresh_token_exp = unix_timestamp() + REFRESH_TOKEN_EXPIRATION;
-    let refresh_token = generate_token(user.id, refresh_token_exp, &app_data.refresh_token_secret);
-    let access_cookie = CookieBuilder::new("access_token", access_token)
-        .http_only(true)
-        .secure(true)
-        .finish();
-    let refresh_cookie = CookieBuilder::new("refresh_token", refresh_token)
-        .http_only(true)
-        .secure(true)
-        .finish();
-    Ok(HttpResponse::SeeOther()
-        .cookie(access_cookie)
-        .cookie(refresh_cookie)
-        .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
-        .finish())
+    let user = find_user_by_username(&app_data.pool, &user_input).await?;
+    match verify(&user_input.password, &user.password) {
+        // the error is for the bcrypt itself
+        Err(err) => Err(Error::UserNotFound(err.into())),
+        Ok(matched) => {
+            if matched {
+                let expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
+                let access_token =
+                    generate_token(user.id, expiration_time, &app_data.access_token_secret);
+                let refresh_token_exp = unix_timestamp() + REFRESH_TOKEN_EXPIRATION;
+                let refresh_token =
+                    generate_token(user.id, refresh_token_exp, &app_data.refresh_token_secret);
+                let access_cookie = CookieBuilder::new("access_token", access_token)
+                    .http_only(true)
+                    .secure(true)
+                    .finish();
+                let refresh_cookie = CookieBuilder::new("refresh_token", refresh_token)
+                    .http_only(true)
+                    .secure(true)
+                    .finish();
+                Ok(HttpResponse::SeeOther()
+                    .cookie(access_cookie)
+                    .cookie(refresh_cookie)
+                    .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
+                    .finish())
+            } else {
+                Err(Error::UserNotFound("password didn't matched".into()))
+            }
+        }
+    }
 }
 
-async fn find_user(pool: &PgPool, user_input: &UserInput) -> Result<User, Error> {
+async fn find_user_by_username(pool: &PgPool, user_input: &UserInput) -> Result<User, Error> {
     Ok(sqlx::query_as!(
         User,
-        "SELECT username, password, id FROM users WHERE username = $1 AND password = $2",
+        "SELECT username, password, id FROM users WHERE username = $1",
         user_input.username,
-        user_input.password
     )
     .fetch_one(pool)
     .await
-    .map_err(|err| {
-        tracing::error!("{err:?}");
-        Error::UserNotFound
-    })?)
+    .map_err(|err| Error::UserNotFound(err.into()))?)
 }
 
 fn token_is_expiring(claims: &Claims) -> bool {
@@ -226,13 +235,15 @@ async fn orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpRe
     }
 }
 
+type GenericError = Box<dyn std::error::Error + Send + Sync>;
+
 #[derive(Debug)]
 enum Error {
     NoRefreshToken,
     NoRefreshData,
-    ImpossibleToAddUser,
+    ImpossibleToAddUser(GenericError),
     UserWithSameNameExists,
-    UserNotFound,
+    UserNotFound(GenericError),
 }
 
 impl fmt::Display for Error {
@@ -243,16 +254,22 @@ impl fmt::Display for Error {
 
 impl ResponseError for Error {
     fn error_response(&self) -> HttpResponse {
-        match *self {
+        match self {
             Error::NoRefreshToken => {
                 HttpResponse::Unauthorized().body(r#""didn't found refresh token""#)
             }
             Error::NoRefreshData => HttpResponse::Unauthorized().body(r#""invalid refresh data""#),
-            Error::ImpossibleToAddUser => HttpResponse::BadRequest().json(r#""try again""#),
+            Error::ImpossibleToAddUser(internal) => {
+                tracing::error!("{internal:?}");
+                HttpResponse::BadRequest().json(r#""try again""#)
+            }
             Error::UserWithSameNameExists => {
                 HttpResponse::BadRequest().json(r#""try different name""#)
             }
-            Error::UserNotFound => HttpResponse::Unauthorized().finish(),
+            Error::UserNotFound(internal) => {
+                tracing::error!("{internal:?}");
+                HttpResponse::Unauthorized().finish()
+            }
         }
     }
 }

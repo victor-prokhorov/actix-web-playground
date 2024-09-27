@@ -24,3 +24,4 @@ sqlx = { version = "0.8.2", default-features = false, features = [
 ] }
 tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }
 dotenv = "0.15.0"
+bcrypt = "0.15.1"
