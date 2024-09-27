@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::{
     env,
-    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -37,7 +36,6 @@ struct Claims {
 }
 
 struct AppData {
-    users: Mutex<Vec<User>>,
     pool: PgPool,
     access_token_secret: Vec<u8>,
     refresh_token_secret: Vec<u8>,
@@ -46,51 +44,88 @@ struct AppData {
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
 const REFRESH_TOKEN_EXPIRATION: usize = 60 * 60 * 24 * 7;
 
-async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppData>) -> impl Responder {
-    tracing::info!("{user_input:?}");
-    get_users(&data.pool).await;
-    let mut users = data.users.lock().unwrap();
+async fn signup(
+    user_input: web::Form<UserInput>,
+    app_data: web::Data<AppData>,
+) -> Result<HttpResponse, Error> {
     let id = Uuid::new_v4();
-    users.push(User {
+    let user = User {
         id,
         username: user_input.username.clone(),
         password: user_input.password.clone(),
-    });
-    tracing::info!("user {} signed", id);
-    HttpResponse::SeeOther()
+    };
+    try_insert_new_user(&app_data.pool, user).await?;
+    Ok(HttpResponse::SeeOther()
         .append_header(("LOCATION", "https://127.0.0.1:3000/login.html"))
-        .finish()
+        .finish())
 }
 
-async fn login(user_input: web::Form<UserInput>, app_data: web::Data<AppData>) -> impl Responder {
-    tracing::info!("{user_input:?}");
-    let users = app_data.users.lock().unwrap();
-    if let Some(user) = users
-        .iter()
-        .find(|user| user_input.username == user.username && user_input.password == user.password)
+async fn try_insert_new_user(pool: &PgPool, user_input: User) -> Result<(), Error> {
+    match sqlx::query!(
+        "INSERT INTO users(username, password) VALUES($1, $2)",
+        user_input.username,
+        user_input.password,
+    )
+    .execute(pool)
+    .await
     {
-        tracing::info!("user {} logged", user.id);
-        let expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
-        let access_token = generate_token(user.id, expiration_time, &app_data.access_token_secret);
-        let refresh_token_exp = unix_timestamp() + REFRESH_TOKEN_EXPIRATION;
-        let refresh_token =
-            generate_token(user.id, refresh_token_exp, &app_data.refresh_token_secret);
-        let access_cookie = CookieBuilder::new("access_token", access_token)
-            .http_only(true)
-            .secure(true)
-            .finish();
-        let refresh_cookie = CookieBuilder::new("refresh_token", refresh_token)
-            .http_only(true)
-            .secure(true)
-            .finish();
-        HttpResponse::SeeOther()
-            .cookie(access_cookie)
-            .cookie(refresh_cookie)
-            .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
-            .finish()
-    } else {
-        HttpResponse::Unauthorized().finish()
+        Err(err) => {
+            tracing::error!("{err:?}");
+            if let Some(dberr) = err.into_database_error() {
+                if let Some(constraint) = dberr.constraint() {
+                    if constraint == "users_username_key" {
+                        return Err(Error::UserWithSameNameExists);
+                    }
+                }
+            }
+            Err(Error::ImpossibleToAddUser)
+        }
+        Ok(query_result) => {
+            tracing::info!("{query_result:?}");
+            Ok(())
+        }
     }
+}
+
+async fn login(
+    user_input: web::Form<UserInput>,
+    app_data: web::Data<AppData>,
+) -> Result<HttpResponse, Error> {
+    let user_input = user_input.into_inner();
+    let user = find_user(&app_data.pool, &user_input).await?;
+    tracing::info!("user {} logged", user.id);
+    let expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
+    let access_token = generate_token(user.id, expiration_time, &app_data.access_token_secret);
+    let refresh_token_exp = unix_timestamp() + REFRESH_TOKEN_EXPIRATION;
+    let refresh_token = generate_token(user.id, refresh_token_exp, &app_data.refresh_token_secret);
+    let access_cookie = CookieBuilder::new("access_token", access_token)
+        .http_only(true)
+        .secure(true)
+        .finish();
+    let refresh_cookie = CookieBuilder::new("refresh_token", refresh_token)
+        .http_only(true)
+        .secure(true)
+        .finish();
+    Ok(HttpResponse::SeeOther()
+        .cookie(access_cookie)
+        .cookie(refresh_cookie)
+        .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
+        .finish())
+}
+
+async fn find_user(pool: &PgPool, user_input: &UserInput) -> Result<User, Error> {
+    Ok(sqlx::query_as!(
+        User,
+        "SELECT username, password, id FROM users WHERE username = $1 AND password = $2",
+        user_input.username,
+        user_input.password
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| {
+        tracing::error!("{err:?}");
+        Error::UserNotFound
+    })?)
 }
 
 fn token_is_expiring(claims: &Claims) -> bool {
@@ -190,18 +225,13 @@ async fn orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpRe
     }
 }
 
-async fn get_users(pool: &PgPool) {
-    let users = sqlx::query_as!(User, "SELECT * FROM users")
-        .fetch_all(pool)
-        .await
-        .expect("failed to query db");
-    tracing::info!("{users:?}");
-}
-
 #[derive(Debug)]
 enum Error {
     NoRefreshToken,
     NoRefreshData,
+    ImpossibleToAddUser,
+    UserWithSameNameExists,
+    UserNotFound,
 }
 
 impl fmt::Display for Error {
@@ -217,6 +247,11 @@ impl ResponseError for Error {
                 HttpResponse::Unauthorized().body(r#""didn't found refresh token""#)
             }
             Error::NoRefreshData => HttpResponse::Unauthorized().body(r#""invalid refresh data""#),
+            Error::ImpossibleToAddUser => HttpResponse::BadRequest().json(r#""try again""#),
+            Error::UserWithSameNameExists => {
+                HttpResponse::BadRequest().json(r#""try different name""#)
+            }
+            Error::UserNotFound => HttpResponse::Unauthorized().finish(),
         }
     }
 }
@@ -256,7 +291,7 @@ fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     dotenv::dotenv().ok();
-    let seed_user = User {
+    let _seed_user = User {
         id: Uuid::new_v4(),
         username: "tester".to_string(),
         password: "tester".to_string(),
@@ -275,7 +310,6 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("failed to create a connection pool to db");
     let app_data = web::Data::new(AppData {
-        users: Mutex::new(vec![seed_user]),
         pool,
         access_token_secret,
         refresh_token_secret,
