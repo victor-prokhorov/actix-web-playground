@@ -36,17 +36,17 @@ struct Claims {
     exp: usize,
 }
 
-struct AppState {
+struct AppData {
     users: Mutex<Vec<User>>,
     pool: PgPool,
+    access_token_secret: Vec<u8>,
+    refresh_token_secret: Vec<u8>,
 }
 
-const SECRET_KEY: &[u8] = b"secret_key";
-const REFRESH_SECRET_KEY: &[u8] = b"refresh_secret_key";
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
 const REFRESH_TOKEN_EXPIRATION: usize = 60 * 60 * 24 * 7;
 
-async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> impl Responder {
+async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppData>) -> impl Responder {
     tracing::info!("{user_input:?}");
     get_users(&data.pool).await;
     let mut users = data.users.lock().unwrap();
@@ -62,18 +62,19 @@ async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> 
         .finish()
 }
 
-async fn login(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> impl Responder {
+async fn login(user_input: web::Form<UserInput>, app_data: web::Data<AppData>) -> impl Responder {
     tracing::info!("{user_input:?}");
-    let users = data.users.lock().unwrap();
+    let users = app_data.users.lock().unwrap();
     if let Some(user) = users
         .iter()
         .find(|user| user_input.username == user.username && user_input.password == user.password)
     {
         tracing::info!("user {} logged", user.id);
         let expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
-        let access_token = generate_token(user.id, expiration_time, SECRET_KEY);
+        let access_token = generate_token(user.id, expiration_time, &app_data.access_token_secret);
         let refresh_token_exp = unix_timestamp() + REFRESH_TOKEN_EXPIRATION;
-        let refresh_token = generate_token(user.id, refresh_token_exp, REFRESH_SECRET_KEY);
+        let refresh_token =
+            generate_token(user.id, refresh_token_exp, &app_data.refresh_token_secret);
         let access_cookie = CookieBuilder::new("access_token", access_token)
             .http_only(true)
             .secure(true)
@@ -139,14 +140,14 @@ async fn logout() -> impl Responder {
         .finish()
 }
 
-async fn orders(req: HttpRequest) -> Result<HttpResponse, Error> {
+async fn orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
     tracing::info!("{req:?}");
     let cookie = req.cookie("access_token");
     if let Some(cookie) = cookie {
         let access_token = cookie.value();
         let access_token_data = decode::<Claims>(
             access_token,
-            &DecodingKey::from_secret(SECRET_KEY),
+            &DecodingKey::from_secret(&app_data.access_token_secret),
             &Validation::default(),
         );
         match access_token_data {
@@ -154,8 +155,11 @@ async fn orders(req: HttpRequest) -> Result<HttpResponse, Error> {
                 tracing::info!("access token found for a user");
                 if token_is_expiring(&token_data.claims) {
                     tracing::info!("access token is expiring");
-                    let new_access_cookie =
-                        try_access_cookie_from_refresh_token(req.cookie("refresh_token"))?;
+                    let new_access_cookie = try_access_cookie_from_refresh_token(
+                        req.cookie("refresh_token"),
+                        &app_data.refresh_token_secret,
+                        &app_data.access_token_secret,
+                    )?;
                     tracing::info!("issued new access token");
                     return Ok(HttpResponse::Ok()
                         .cookie(new_access_cookie)
@@ -165,8 +169,11 @@ async fn orders(req: HttpRequest) -> Result<HttpResponse, Error> {
             }
             Err(err) => match err.kind() {
                 ErrorKind::ExpiredSignature => {
-                    let new_access_cookie =
-                        try_access_cookie_from_refresh_token(req.cookie("refresh_token"))?;
+                    let new_access_cookie = try_access_cookie_from_refresh_token(
+                        req.cookie("refresh_token"),
+                        &app_data.refresh_token_secret,
+                        &app_data.access_token_secret,
+                    )?;
                     tracing::info!("issued new access token after expied signature");
                     return Ok(HttpResponse::Ok()
                         .cookie(new_access_cookie)
@@ -214,17 +221,24 @@ impl ResponseError for Error {
     }
 }
 
-fn try_access_cookie_from_refresh_token(cookie: Option<Cookie>) -> Result<Cookie, Error> {
+fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
+    cookie: Option<Cookie>,
+    refresh_token_secret: &'refresh [u8],
+    access_token_secret: &'access [u8],
+) -> Result<Cookie<'cookie>, Error> {
     if let Some(refresh_cookie) = cookie {
         let refresh_token_data = decode::<Claims>(
             refresh_cookie.value(),
-            &DecodingKey::from_secret(REFRESH_SECRET_KEY),
+            &DecodingKey::from_secret(refresh_token_secret),
             &Validation::default(),
         );
         if let Ok(refresh_data) = refresh_token_data {
             let new_expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
-            let new_access_token =
-                generate_token(refresh_data.claims.sub, new_expiration_time, SECRET_KEY);
+            let new_access_token = generate_token(
+                refresh_data.claims.sub,
+                new_expiration_time,
+                access_token_secret,
+            );
             let new_access_cookie = CookieBuilder::new("access_token", new_access_token)
                 .http_only(true)
                 .secure(true)
@@ -249,16 +263,26 @@ async fn main() -> std::io::Result<()> {
     };
     let config = common::load_rustls_config();
     let database_url = env::var("DATABASE_URL").expect("make sure DATABASE_URL is set");
+    let access_token_secret = env::var("ACCESS_TOKEN_SECRET")
+        .expect("ACCESS_TOKEN_SECRET not set")
+        .bytes()
+        .collect();
+    let refresh_token_secret = env::var("REFRESH_TOKEN_SECRET")
+        .expect("REFRESH_TOKEN_SECRET not set")
+        .bytes()
+        .collect();
     let pool = PgPool::connect(&database_url)
         .await
         .expect("failed to create a connection pool to db");
-    let shared_data = web::Data::new(AppState {
+    let app_data = web::Data::new(AppData {
         users: Mutex::new(vec![seed_user]),
         pool,
+        access_token_secret,
+        refresh_token_secret,
     });
     HttpServer::new(move || {
         App::new()
-            .app_data(shared_data.clone())
+            .app_data(app_data.clone())
             .wrap(
                 Cors::default()
                     .allowed_origin("https://127.0.0.1:3000")
