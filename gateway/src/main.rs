@@ -9,7 +9,9 @@ use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::{
+    env,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,6 +23,7 @@ struct UserInput {
     password: String,
 }
 
+#[derive(Debug)]
 struct User {
     id: Uuid,
     username: String,
@@ -35,6 +38,7 @@ struct Claims {
 
 struct AppState {
     users: Mutex<Vec<User>>,
+    pool: PgPool,
 }
 
 const SECRET_KEY: &[u8] = b"secret_key";
@@ -44,6 +48,7 @@ const REFRESH_TOKEN_EXPIRATION: usize = 60 * 60 * 24 * 7;
 
 async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> impl Responder {
     tracing::info!("{user_input:?}");
+    get_users(&data.pool).await;
     let mut users = data.users.lock().unwrap();
     let id = Uuid::new_v4();
     users.push(User {
@@ -178,6 +183,14 @@ async fn orders(req: HttpRequest) -> Result<HttpResponse, Error> {
     }
 }
 
+async fn get_users(pool: &PgPool) {
+    let users = sqlx::query_as!(User, "SELECT * FROM users")
+        .fetch_all(pool)
+        .await
+        .expect("failed to query db");
+    tracing::info!("{users:?}");
+}
+
 #[derive(Debug)]
 enum Error {
     NoRefreshToken,
@@ -228,15 +241,21 @@ fn try_access_cookie_from_refresh_token(cookie: Option<Cookie>) -> Result<Cookie
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    dotenv::dotenv().ok();
     let seed_user = User {
         id: Uuid::new_v4(),
         username: "tester".to_string(),
         password: "tester".to_string(),
     };
+    let config = common::load_rustls_config();
+    let database_url = env::var("DATABASE_URL").expect("make sure DATABASE_URL is set");
+    let pool = PgPool::connect(&database_url)
+        .await
+        .expect("failed to create a connection pool to db");
     let shared_data = web::Data::new(AppState {
         users: Mutex::new(vec![seed_user]),
+        pool,
     });
-    let config = common::load_rustls_config();
     HttpServer::new(move || {
         App::new()
             .app_data(shared_data.clone())
@@ -254,6 +273,7 @@ async fn main() -> std::io::Result<()> {
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
+    .workers(1)
     .bind_rustls_0_23(("127.0.0.1", 3001), config)?
     .run()
     .await

@@ -1,0 +1,34 @@
+# https://stackoverflow.com/a/75246287
+# docker-compose up -d
+# docker-compose logs gatewaydb
+# docker-compose down -v # remove volumes
+# psql -h localhost -p 3002 -U postgres -d gatewaydb
+version: '3.9'
+
+services:
+  gatewaydb:
+    container_name: postgres
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gatewaydb
+      PGDATA: /data/postgres
+    volumes:
+      - gatewaydb:/data/postgres
+    ports:
+      - "3002:5432"
+    networks:
+      - gatewaydb
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+networks:
+  gatewaydb:
+    driver: bridge
+
+volumes:
+  gatewaydb:
