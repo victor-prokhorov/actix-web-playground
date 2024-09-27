@@ -60,11 +60,12 @@ async fn signup(
         .finish())
 }
 
-async fn try_insert_new_user(pool: &PgPool, user_input: User) -> Result<(), Error> {
+async fn try_insert_new_user(pool: &PgPool, user: User) -> Result<(), Error> {
     match sqlx::query!(
-        "INSERT INTO users(username, password) VALUES($1, $2)",
-        user_input.username,
-        user_input.password,
+        "INSERT INTO users(id, username, password) VALUES($1, $2, $3)",
+        user.id,
+        user.username,
+        user.password,
     )
     .execute(pool)
     .await
