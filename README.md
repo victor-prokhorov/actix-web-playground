@@ -18,3 +18,4 @@ curl -v https://127.0.0.1:3001/signup \
 - mTLS seems also possible
 - [PR](https://github.com/actix/actix-web/issues/1727)
 - [implementation example](https://github.com/actix/examples/blob/master/https-tls/rustls-client-cert/src/main.rs)
+- [jwt crate](https://github.com/Keats/jsonwebtoken)
