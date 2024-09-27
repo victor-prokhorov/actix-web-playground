@@ -291,11 +291,6 @@ fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     dotenv::dotenv().ok();
-    let _seed_user = User {
-        id: Uuid::new_v4(),
-        username: "tester".to_string(),
-        password: "tester".to_string(),
-    };
     let config = common::load_rustls_config();
     let database_url = env::var("DATABASE_URL").expect("make sure DATABASE_URL is set");
     let access_token_secret = env::var("ACCESS_TOKEN_SECRET")
