@@ -1,9 +1,13 @@
 use actix_cors::Cors;
 use actix_web::{
-    cookie::CookieBuilder, middleware::Logger, web, App, HttpRequest, HttpResponse, HttpServer,
-    Responder,
+    cookie::{time::OffsetDateTime, Cookie, CookieBuilder},
+    middleware::Logger,
+    web, App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use core::fmt;
+use jsonwebtoken::{
+    decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     sync::Mutex,
@@ -48,7 +52,7 @@ async fn signup(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> 
         password: user_input.password.clone(),
     });
     tracing::info!("user {} signed", id);
-    HttpResponse::Found()
+    HttpResponse::SeeOther()
         .append_header(("LOCATION", "https://127.0.0.1:3000/login.html"))
         .finish()
 }
@@ -73,7 +77,7 @@ async fn login(user_input: web::Form<UserInput>, data: web::Data<AppState>) -> i
             .http_only(true)
             .secure(true)
             .finish();
-        HttpResponse::Found()
+        HttpResponse::SeeOther()
             .cookie(access_cookie)
             .cookie(refresh_cookie)
             .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
@@ -110,7 +114,27 @@ fn generate_token(user_id: Uuid, expiration: usize, secret: &[u8]) -> String {
     .unwrap()
 }
 
-async fn orders(req: HttpRequest) -> impl Responder {
+async fn logout() -> impl Responder {
+    tracing::info!("logout");
+    let now = OffsetDateTime::now_utc();
+    let access_cookie = CookieBuilder::new("access_token", "")
+        .http_only(true)
+        .secure(true)
+        .expires(Some(now))
+        .finish();
+    let refresh_cookie = CookieBuilder::new("refresh_token", "")
+        .http_only(true)
+        .secure(true)
+        .expires(Some(now))
+        .finish();
+    // client side redirect here
+    HttpResponse::Ok()
+        .cookie(access_cookie)
+        .cookie(refresh_cookie)
+        .finish()
+}
+
+async fn orders(req: HttpRequest) -> Result<HttpResponse, Error> {
     tracing::info!("{req:?}");
     let cookie = req.cookie("access_token");
     if let Some(cookie) = cookie {
@@ -124,41 +148,80 @@ async fn orders(req: HttpRequest) -> impl Responder {
             Ok(token_data) => {
                 tracing::info!("access token found for a user");
                 if token_is_expiring(&token_data.claims) {
-                    if let Some(refresh_cookie) = req.cookie("refresh_token") {
-                        let refresh_token_data = decode::<Claims>(
-                            refresh_cookie.value(),
-                            &DecodingKey::from_secret(REFRESH_SECRET_KEY),
-                            &Validation::default(),
-                        );
-                        if let Ok(refresh_data) = refresh_token_data {
-                            let new_expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
-                            let new_access_token = generate_token(
-                                refresh_data.claims.sub,
-                                new_expiration_time,
-                                SECRET_KEY,
-                            );
-                            let new_access_cookie =
-                                CookieBuilder::new("access_token", new_access_token)
-                                    .http_only(true)
-                                    .secure(true)
-                                    .finish();
-                            tracing::info!("issued new access token");
-                            return HttpResponse::Ok().cookie(new_access_cookie).body(format!(
-                                r#""{} got his token refreshed""#,
-                                refresh_data.claims.sub
-                            ));
-                        }
-                    }
+                    tracing::info!("access token is expiring");
+                    let new_access_cookie =
+                        try_access_cookie_from_refresh_token(req.cookie("refresh_token"))?;
+                    tracing::info!("issued new access token");
+                    return Ok(HttpResponse::Ok()
+                        .cookie(new_access_cookie)
+                        .body(format!(r#""token refreshed""#)));
                 }
-                HttpResponse::Ok().body(format!(r#""{} have a token""#, token_data.claims.sub))
+                Ok(HttpResponse::Ok().body(format!(r#""found a valid token""#)))
             }
-            Err(err) => {
-                tracing::error!("{err:?}");
-                HttpResponse::Unauthorized().finish()
-            }
+            Err(err) => match err.kind() {
+                ErrorKind::ExpiredSignature => {
+                    let new_access_cookie =
+                        try_access_cookie_from_refresh_token(req.cookie("refresh_token"))?;
+                    tracing::info!("issued new access token after expied signature");
+                    return Ok(HttpResponse::Ok()
+                        .cookie(new_access_cookie)
+                        .body(format!(r#""token refreshed after expired signature""#,)));
+                }
+                _ => {
+                    tracing::error!("{err:?}");
+                    Ok(HttpResponse::Unauthorized().finish())
+                }
+            },
         }
     } else {
-        HttpResponse::Unauthorized().finish()
+        Ok(HttpResponse::Unauthorized().finish())
+    }
+}
+
+#[derive(Debug)]
+enum Error {
+    NoRefreshToken,
+    NoRefreshData,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self)
+    }
+}
+
+impl ResponseError for Error {
+    fn error_response(&self) -> HttpResponse {
+        match *self {
+            Error::NoRefreshToken => {
+                HttpResponse::Unauthorized().body(r#""didn't found refresh token""#)
+            }
+            Error::NoRefreshData => HttpResponse::Unauthorized().body(r#""invalid refresh data""#),
+        }
+    }
+}
+
+fn try_access_cookie_from_refresh_token(cookie: Option<Cookie>) -> Result<Cookie, Error> {
+    if let Some(refresh_cookie) = cookie {
+        let refresh_token_data = decode::<Claims>(
+            refresh_cookie.value(),
+            &DecodingKey::from_secret(REFRESH_SECRET_KEY),
+            &Validation::default(),
+        );
+        if let Ok(refresh_data) = refresh_token_data {
+            let new_expiration_time = unix_timestamp() + ACCESS_TOKEN_EXPIRATION;
+            let new_access_token =
+                generate_token(refresh_data.claims.sub, new_expiration_time, SECRET_KEY);
+            let new_access_cookie = CookieBuilder::new("access_token", new_access_token)
+                .http_only(true)
+                .secure(true)
+                .finish();
+            Ok(new_access_cookie)
+        } else {
+            Err(Error::NoRefreshData)
+        }
+    } else {
+        Err(Error::NoRefreshToken)
     }
 }
 
@@ -188,6 +251,7 @@ async fn main() -> std::io::Result<()> {
             .route("/signup", web::post().to(signup))
             .route("/login", web::post().to(login))
             .route("/orders", web::get().to(orders))
+            .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
     .bind_rustls_0_23(("127.0.0.1", 3001), config)?
