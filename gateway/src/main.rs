@@ -10,7 +10,7 @@ use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool};
 use std::{
     env,
     time::{SystemTime, UNIX_EPOCH},
@@ -185,8 +185,90 @@ async fn logout() -> impl Responder {
         .finish()
 }
 
-async fn orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
-    tracing::info!("{req:?}");
+#[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
+struct OrderContent {
+    content: Option<String>,
+}
+
+async fn get_order(
+    id: web::Path<Uuid>,
+    app_data: web::Data<AppData>,
+) -> Result<HttpResponse, Error> {
+    let order: OrderContent = sqlx::query_as!(
+        OrderContent,
+        "SELECT content FROM orders WHERE id = $1",
+        id.into_inner()
+    )
+    .fetch_one(&app_data.pool)
+    .await
+    .map_err(|err| Error::Db(err.into()))?;
+    Ok(HttpResponse::Ok().json(order))
+}
+
+#[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
+struct OrderId {
+    id: Uuid,
+}
+
+#[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
+struct OrderInput {
+    id: Uuid,
+    user_id: Option<Uuid>,
+    content: Option<String>,
+}
+
+async fn post_order(
+    app_data: web::Data<AppData>,
+    order_input: web::Json<OrderInput>,
+) -> Result<HttpResponse, Error> {
+    let order_id: OrderId = sqlx::query_as!(
+        OrderId,
+        "INSERT INTO orders(id, user_id, content) VALUES($1, $2, $3) RETURNING id",
+        order_input.id,
+        order_input.user_id,
+        order_input.content,
+    )
+    .fetch_one(&app_data.pool)
+    .await
+    .map_err(|err| Error::Db(err.into()))?;
+    Ok(HttpResponse::Ok().json(order_id))
+}
+
+#[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
+struct OrderUpdateInput {
+    content: Option<String>,
+    user_id: Option<Uuid>,
+}
+
+async fn put_order(
+    id: web::Path<Uuid>,
+    app_data: web::Data<AppData>,
+    order_update_input: web::Json<OrderUpdateInput>,
+) -> Result<HttpResponse, Error> {
+    sqlx::query!(
+        "UPDATE orders SET content = $1, user_id = $2 WHERE id = $3",
+        order_update_input.content,
+        order_update_input.user_id,
+        id.into_inner()
+    )
+    .execute(&app_data.pool)
+    .await
+    .map_err(|err| Error::Db(err.into()))?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+async fn delete_order(
+    id: web::Path<Uuid>,
+    app_data: web::Data<AppData>,
+) -> Result<HttpResponse, Error> {
+    sqlx::query!("DELETE FROM orders WHERE id = $1", id.into_inner())
+        .execute(&app_data.pool)
+        .await
+        .map_err(|err| Error::Db(err.into()))?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
     let cookie = req.cookie("access_token");
     if let Some(cookie) = cookie {
         let access_token = cookie.value();
@@ -244,6 +326,7 @@ enum Error {
     ImpossibleToAddUser(GenericError),
     UserWithSameNameExists,
     UserNotFound(GenericError),
+    Db(GenericError),
 }
 
 impl fmt::Display for Error {
@@ -269,6 +352,10 @@ impl ResponseError for Error {
             Error::UserNotFound(internal) => {
                 tracing::error!("{internal:?}");
                 HttpResponse::Unauthorized().finish()
+            }
+            Error::Db(internal) => {
+                tracing::error!("{internal:?}");
+                HttpResponse::InternalServerError().finish()
             }
         }
     }
@@ -340,7 +427,14 @@ async fn main() -> std::io::Result<()> {
             )
             .route("/signup", web::post().to(signup))
             .route("/login", web::post().to(login))
-            .route("/orders", web::get().to(orders))
+            .service(
+                web::scope("/orders")
+                    .route("/", web::get().to(get_orders))
+                    .route("/", web::post().to(post_order))
+                    .route("/{id}", web::get().to(get_order))
+                    .route("/{id}", web::put().to(put_order))
+                    .route("/{id}", web::delete().to(delete_order)),
+            )
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
