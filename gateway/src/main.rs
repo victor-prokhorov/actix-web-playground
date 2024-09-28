@@ -426,7 +426,11 @@ async fn main() -> std::io::Result<()> {
                     .route("/{id}", web::put().to(put_order))
                     .route("/{id}", web::delete().to(delete_order)),
             )
-            .service(web::resource("/ws").route(web::get().to(orders_ws)))
+            .service(
+                web::resource("/ws")
+                    .route(web::get().to(orders_ws))
+                    .wrap(from_fn(auth_middleware)),
+            )
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
