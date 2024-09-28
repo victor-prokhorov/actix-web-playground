@@ -6,7 +6,7 @@ use actix_web::{
     http::header::LOCATION,
     middleware::{from_fn, Logger, Next},
     web::{self, Data},
-    App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
+    App, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
 use core::fmt;
@@ -19,6 +19,7 @@ use std::{
     env,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(Deserialize, Debug)]
@@ -197,6 +198,7 @@ struct OrderContent {
     content: Option<String>,
 }
 
+#[instrument]
 async fn get_order(
     id: web::Path<Uuid>,
     app_data: web::Data<AppData>,
@@ -219,7 +221,6 @@ struct OrderId {
 
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
 struct OrderInput {
-    id: Uuid,
     user_id: Option<Uuid>,
     content: Option<String>,
 }
@@ -231,14 +232,15 @@ struct Order {
     content: Option<String>,
 }
 
+#[tracing::instrument]
 async fn post_order(
     app_data: web::Data<AppData>,
     order_input: web::Json<OrderInput>,
 ) -> Result<HttpResponse, Error> {
-    let order_id: OrderId = sqlx::query_as!(
+    let order_id = sqlx::query_as!(
         OrderId,
         "INSERT INTO orders(id, user_id, content) VALUES($1, $2, $3) RETURNING id",
-        order_input.id,
+        Uuid::new_v4(),
         order_input.user_id,
         order_input.content,
     )
@@ -254,6 +256,10 @@ struct OrderUpdateInput {
     user_id: Option<Uuid>,
 }
 
+#[instrument(
+    skip(app_data),
+    fields(content = ?order_update_input.content, user_id = ?order_update_input.user_id, id = ?id)
+)]
 async fn put_order(
     id: web::Path<Uuid>,
     app_data: web::Data<AppData>,
@@ -407,7 +413,7 @@ async fn main() -> std::io::Result<()> {
             .route("/login", web::post().to(login))
             .service(
                 web::scope("/orders")
-                    .wrap(from_fn(reject_anonymous_users))
+                    .wrap(from_fn(auth_middleware))
                     .route("/", web::get().to(get_orders))
                     .route("/", web::post().to(post_order))
                     .route("/{id}", web::get().to(get_order))
@@ -423,26 +429,11 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-pub async fn reject_anonymous_users(
+#[instrument(skip(next))]
+pub async fn auth_middleware(
     req: ServiceRequest,
     next: Next<impl MessageBody>,
 ) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
-    // let _session = {
-    //     let (_http_request, _payload) = req.parts_mut();
-    //     let _d: &Data<AppData> = _http_request.app_data().unwrap();
-    //     tracing::info!("===d: {_d:?}\n");
-    //     Ok::<(), actix_web::Error>(())
-    // }?;
-    // let _data: &Data<AppData> = req.app_data().unwrap();
-    // let _response = see_other("/login");
-    // tracing::info!("===r: {_response:?}\n===da: {_data:?}");
-    // let result: Result<(), _> = Err(Error::Auth("nope".into()));
-    // let _ok = result;
-    // response
-    //     .response_mut()
-    //     .add_cookie(&Cookie::new("hi_cookie", "i'm sweet"))?;
-    // Ok(response);
-    /////////////
     let app_data: Data<AppData> = req
         .app_data()
         .cloned()
@@ -491,17 +482,4 @@ pub async fn reject_anonymous_users(
     } else {
         Err(Error::Auth("anonymous user without a cookie".into()).into())
     }
-}
-// Return an opaque 500 while preserving the error root's cause for logging.
-pub fn e500<T>(e: T) -> actix_web::Error
-where
-    T: std::fmt::Debug + std::fmt::Display + 'static,
-{
-    actix_web::error::ErrorInternalServerError(e)
-}
-
-pub fn see_other(location: &str) -> HttpResponse {
-    HttpResponse::SeeOther()
-        .insert_header((LOCATION, location))
-        .finish()
 }

@@ -12,7 +12,7 @@ async function getOrders() {
 
 async function getOrderById(id) {
     try {
-        const resp = await fetch(`${BASE_URL}/${id}`, { credentials: 'include', method: 'GET' });
+        const resp = await fetch(`${BASE_URL}${id}`, { credentials: 'include', method: 'GET' });
         const order = await resp.json();
         console.log(order);
     } catch (err) {
@@ -26,7 +26,11 @@ async function postOrder(orderData) {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(orderData)
+            body: JSON.stringify({
+                content: orderData.content, 
+                id: orderData.id || null,
+                user_id: orderData.id || null,
+            })
         });
         const result = await resp.json();
         console.log(result);
@@ -37,14 +41,13 @@ async function postOrder(orderData) {
 
 async function updateOrder(id, orderData) {
     try {
-        const resp = await fetch(`${BASE_URL}/${id}`, {
+        const resp = await fetch(`${BASE_URL}${id}`, {
             method: 'PUT',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(orderData)
         });
-        const result = await resp.json();
-        console.log(result);
+        console.log('ok');
     } catch (err) {
         console.error(err);
     }
@@ -52,12 +55,11 @@ async function updateOrder(id, orderData) {
 
 async function deleteOrder(id) {
     try {
-        const resp = await fetch(`${BASE_URL}/${id}`, {
+        const resp = await fetch(`${BASE_URL}${id}`, {
             method: 'DELETE',
             credentials: 'include'
         });
-        const result = await resp.json();
-        console.log(result);
+        console.log('ok');
     } catch (err) {
         console.error(err);
     }
@@ -70,33 +72,33 @@ document.getElementById('getOrdersForm').addEventListener('submit', function (e)
 
 document.getElementById('getOrderForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    const orderId = document.getElementById('orderId').value;
+    const orderId = document.getElementById('orderId').value || null;
     getOrderById(orderId);
 });
 
 document.getElementById('postOrderForm').addEventListener('submit', function (e) {
     e.preventDefault();
     const orderData = {
-        id: document.getElementById('newOrderId').value,
-        user_id: document.getElementById('newUserId').value,
-        content: document.getElementById('newContent').value
+        id: document.getElementById('newOrderId').value || null,
+        user_id: document.getElementById('newUserId').value || null,
+        content: document.getElementById('newContent').value || null
     };
     postOrder(orderData);
 });
 
 document.getElementById('putOrderForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    const orderId = document.getElementById('updateOrderId').value;
+    const orderId = document.getElementById('updateOrderId').value || null;
     const orderData = {
-        user_id: document.getElementById('updateUserId').value,
-        content: document.getElementById('updateContent').value
+        user_id: document.getElementById('updateUserId').value || null,
+        content: document.getElementById('updateContent').value || null
     };
     updateOrder(orderId, orderData);
 });
 
 document.getElementById('deleteOrderForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    const orderId = document.getElementById('deleteOrderId').value;
+    const orderId = document.getElementById('deleteOrderId').value || null;
     deleteOrder(orderId);
 });
 
