@@ -1,5 +1,11 @@
-use actix_files::Files;
-use actix_web::{middleware::Logger, App, HttpServer};
+use actix_files::{Files, NamedFile};
+use actix_web::{middleware::Logger, web, App, HttpServer, Responder};
+
+async fn index() -> impl Responder {
+    NamedFile::open_async("./static/ws/index.html")
+        .await
+        .unwrap()
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -8,6 +14,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .service(Files::new("/", "./static/").index_file("index.html"))
+            .service(web::resource("/ws").to(index))
             .wrap(Logger::default())
     })
     .workers(1)

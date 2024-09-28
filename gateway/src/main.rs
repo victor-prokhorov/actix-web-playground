@@ -5,8 +5,9 @@ use actix_web::{
     dev::{ServiceRequest, ServiceResponse},
     http::header::LOCATION,
     middleware::{from_fn, Logger, Next},
+    rt,
     web::{self, Data},
-    App, HttpResponse, HttpServer, Responder, ResponseError,
+    App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
 use core::fmt;
@@ -19,6 +20,7 @@ use std::{
     env,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::broadcast;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -46,6 +48,7 @@ struct AppData {
     pool: PgPool,
     access_token_secret: Vec<u8>,
     refresh_token_secret: Vec<u8>,
+    tx: broadcast::Sender<web::Bytes>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
@@ -393,10 +396,12 @@ async fn main() -> std::io::Result<()> {
     let pool = PgPool::connect(&database_url)
         .await
         .expect("failed to create a connection pool to db");
+    let (tx, _) = broadcast::channel::<web::Bytes>(128);
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
         refresh_token_secret,
+        tx,
     });
     HttpServer::new(move || {
         App::new()
@@ -420,6 +425,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/{id}", web::put().to(put_order))
                     .route("/{id}", web::delete().to(delete_order)),
             )
+            .service(web::resource("/ws").route(web::get().to(echo_ws)))
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
@@ -427,6 +433,79 @@ async fn main() -> std::io::Result<()> {
     .bind_rustls_0_23(("127.0.0.1", 3001), config)?
     .run()
     .await
+}
+
+mod handler {
+    use actix_ws::Message;
+    use futures_util::StreamExt as _;
+
+    /// Echo text & binary messages received from the client and respond to ping messages.
+    ///
+    /// This example is just for demonstration of simplicity. In reality, you likely want to include
+    /// some handling of heartbeats for connection health tracking to free up server resources when
+    /// connections die or network issues arise.
+    ///
+    /// See [`echo_heartbeat_ws`] for a more realistic implementation.
+    pub async fn echo_ws(mut session: actix_ws::Session, mut msg_stream: actix_ws::MessageStream) {
+        log::info!("connected");
+
+        let close_reason = loop {
+            match msg_stream.next().await {
+                Some(Ok(msg)) => {
+                    log::debug!("msg: {msg:?}");
+
+                    match msg {
+                        Message::Text(text) => {
+                            session.text(text).await.unwrap();
+                        }
+
+                        Message::Binary(bin) => {
+                            session.binary(bin).await.unwrap();
+                        }
+
+                        Message::Close(reason) => {
+                            break reason;
+                        }
+
+                        Message::Ping(bytes) => {
+                            let _ = session.pong(&bytes).await;
+                        }
+
+                        Message::Pong(_) => {}
+
+                        Message::Continuation(_) => {
+                            log::warn!("no support for continuation frames");
+                        }
+
+                        // no-op; ignore
+                        Message::Nop => {}
+                    };
+                }
+
+                // error or end of stream
+                _ => break None,
+            }
+        };
+
+        // attempt to close connection gracefully
+        let _ = session.close(close_reason).await;
+
+        log::info!("disconnected");
+    }
+}
+
+/// Handshake and start basic WebSocket handler.
+///
+/// This example is just for simple demonstration. In reality, you likely want to include
+/// some handling of heartbeats for connection health tracking to free up server resources when
+/// connections die or network issues arise.
+async fn echo_ws(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
+    let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
+
+    // spawn websocket handler (and don't await it) so that the response is returned immediately
+    rt::spawn(handler::echo_ws(session, msg_stream));
+
+    Ok(res)
 }
 
 #[instrument(skip(next))]

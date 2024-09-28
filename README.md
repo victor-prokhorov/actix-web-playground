@@ -19,3 +19,5 @@ curl -v https://127.0.0.1:3001/signup \
 - [PR](https://github.com/actix/actix-web/issues/1727)
 - [implementation example](https://github.com/actix/examples/blob/master/https-tls/rustls-client-cert/src/main.rs)
 - [jwt crate](https://github.com/Keats/jsonwebtoken)
+- [from_fn middleware example](https://github.com/LukeMathWalker/zero-to-production/blob/970987c5f793af6fc8e557731c9bbb23b620451e/src/authentication/middleware.rs#L28)
+- [websocket echo server example](https://github.com/actix/examples/blob/master/websockets/echo-actorless/src/handler.rs)
