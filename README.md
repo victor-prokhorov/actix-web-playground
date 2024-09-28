@@ -21,3 +21,4 @@ curl -v https://127.0.0.1:3001/signup \
 - [jwt crate](https://github.com/Keats/jsonwebtoken)
 - [from_fn middleware example](https://github.com/LukeMathWalker/zero-to-production/blob/970987c5f793af6fc8e557731c9bbb23b620451e/src/authentication/middleware.rs#L28)
 - [websocket echo server example](https://github.com/actix/examples/blob/master/websockets/echo-actorless/src/handler.rs)
+- [html page to test ws](https://github.com/actix/examples/blob/master/websockets/echo/static/index.html)

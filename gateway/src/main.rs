@@ -20,7 +20,6 @@ use std::{
     env,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::broadcast;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -48,7 +47,6 @@ struct AppData {
     pool: PgPool,
     access_token_secret: Vec<u8>,
     refresh_token_secret: Vec<u8>,
-    tx: broadcast::Sender<web::Bytes>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
@@ -396,12 +394,10 @@ async fn main() -> std::io::Result<()> {
     let pool = PgPool::connect(&database_url)
         .await
         .expect("failed to create a connection pool to db");
-    let (tx, _) = broadcast::channel::<web::Bytes>(128);
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
         refresh_token_secret,
-        tx,
     });
     HttpServer::new(move || {
         App::new()
@@ -425,7 +421,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/{id}", web::put().to(put_order))
                     .route("/{id}", web::delete().to(delete_order)),
             )
-            .service(web::resource("/ws").route(web::get().to(echo_ws)))
+            .service(web::resource("/ws").route(web::get().to(echo_heartbeat_ws)))
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
@@ -437,73 +433,83 @@ async fn main() -> std::io::Result<()> {
 
 mod handler {
     use actix_ws::Message;
-    use futures_util::StreamExt as _;
+    use futures_util::{
+        future::{self, Either},
+        StreamExt as _,
+    };
+    use std::time::{Duration, Instant};
+    use tokio::{pin, time::interval};
 
-    /// Echo text & binary messages received from the client and respond to ping messages.
-    ///
-    /// This example is just for demonstration of simplicity. In reality, you likely want to include
-    /// some handling of heartbeats for connection health tracking to free up server resources when
-    /// connections die or network issues arise.
-    ///
-    /// See [`echo_heartbeat_ws`] for a more realistic implementation.
-    pub async fn echo_ws(mut session: actix_ws::Session, mut msg_stream: actix_ws::MessageStream) {
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+    const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    pub async fn echo_heartbeat_ws(
+        mut session: actix_ws::Session,
+        mut msg_stream: actix_ws::MessageStream,
+    ) {
         log::info!("connected");
-
-        let close_reason = loop {
-            match msg_stream.next().await {
-                Some(Ok(msg)) => {
+        let mut last_heartbeat = Instant::now();
+        let mut interval = interval(HEARTBEAT_INTERVAL);
+        let reason = loop {
+            let tick = interval.tick();
+            pin!(tick);
+            match future::select(msg_stream.next(), tick).await {
+                Either::Left((Some(Ok(msg)), _)) => {
                     log::debug!("msg: {msg:?}");
-
                     match msg {
                         Message::Text(text) => {
                             session.text(text).await.unwrap();
                         }
-
                         Message::Binary(bin) => {
                             session.binary(bin).await.unwrap();
                         }
-
                         Message::Close(reason) => {
                             break reason;
                         }
-
                         Message::Ping(bytes) => {
+                            log::info!("ping");
+                            last_heartbeat = Instant::now();
                             let _ = session.pong(&bytes).await;
                         }
-
-                        Message::Pong(_) => {}
-
+                        Message::Pong(_) => {
+                            log::info!("pong");
+                            last_heartbeat = Instant::now();
+                        }
                         Message::Continuation(_) => {
                             log::warn!("no support for continuation frames");
                         }
-
-                        // no-op; ignore
                         Message::Nop => {}
                     };
                 }
-
-                // error or end of stream
-                _ => break None,
+                Either::Left((Some(Err(err)), _)) => {
+                    log::error!("{}", err);
+                    break None;
+                }
+                Either::Left((None, _)) => break None,
+                Either::Right((_inst, _)) => {
+                    if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
+                        log::info!(
+                        "client has not sent heartbeat in over {CLIENT_TIMEOUT:?}; disconnecting"
+                    );
+                        break None;
+                    }
+                    let _ = session.ping(b"").await;
+                }
             }
         };
-
-        // attempt to close connection gracefully
-        let _ = session.close(close_reason).await;
-
+        let _ = session.close(reason).await;
         log::info!("disconnected");
     }
 }
 
-/// Handshake and start basic WebSocket handler.
-///
-/// This example is just for simple demonstration. In reality, you likely want to include
-/// some handling of heartbeats for connection health tracking to free up server resources when
-/// connections die or network issues arise.
-async fn echo_ws(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
+async fn echo_heartbeat_ws(
+    req: HttpRequest,
+    stream: web::Payload,
+) -> Result<HttpResponse, actix_web::Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
 
     // spawn websocket handler (and don't await it) so that the response is returned immediately
-    rt::spawn(handler::echo_ws(session, msg_stream));
+    rt::spawn(handler::echo_heartbeat_ws(session, msg_stream));
 
     Ok(res)
 }
