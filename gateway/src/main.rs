@@ -1,8 +1,12 @@
 use actix_cors::Cors;
 use actix_web::{
+    body::MessageBody,
     cookie::{time::OffsetDateTime, Cookie, CookieBuilder},
-    middleware::Logger,
-    web, App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
+    dev::{ServiceRequest, ServiceResponse},
+    http::header::LOCATION,
+    middleware::{from_fn, Logger, Next},
+    web::{self, Data},
+    App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
 use core::fmt;
@@ -36,6 +40,7 @@ struct Claims {
     exp: usize,
 }
 
+#[derive(Debug)]
 struct AppData {
     pool: PgPool,
     access_token_secret: Vec<u8>,
@@ -59,7 +64,7 @@ async fn signup(
     };
     try_insert_new_user(&app_data.pool, user).await?;
     Ok(HttpResponse::SeeOther()
-        .append_header(("LOCATION", "https://127.0.0.1:3000/login.html"))
+        .append_header((LOCATION, "https://127.0.0.1:3000/login.html"))
         .finish())
 }
 
@@ -118,7 +123,7 @@ async fn login(
                 Ok(HttpResponse::SeeOther()
                     .cookie(access_cookie)
                     .cookie(refresh_cookie)
-                    .append_header(("LOCATION", "https://127.0.0.1:3000/orders.html"))
+                    .append_header((LOCATION, "https://127.0.0.1:3000/orders.html"))
                     .finish())
             } else {
                 Err(Error::UserNotFound("password didn't matched".into()))
@@ -171,6 +176,8 @@ async fn logout() -> impl Responder {
     let access_cookie = CookieBuilder::new("access_token", "")
         .http_only(true)
         .secure(true)
+        // TODO:
+        // i just found `add_removal_cookie` method i guess it's more readable then hand written
         .expires(Some(now))
         .finish();
     let refresh_cookie = CookieBuilder::new("refresh_token", "")
@@ -327,6 +334,7 @@ enum Error {
     UserWithSameNameExists,
     UserNotFound(GenericError),
     Db(GenericError),
+    Auth(GenericError),
 }
 
 impl fmt::Display for Error {
@@ -356,6 +364,10 @@ impl ResponseError for Error {
             Error::Db(internal) => {
                 tracing::error!("{internal:?}");
                 HttpResponse::InternalServerError().finish()
+            }
+            Error::Auth(internal) => {
+                tracing::error!("{internal:?}");
+                HttpResponse::Unauthorized().finish()
             }
         }
     }
@@ -429,6 +441,7 @@ async fn main() -> std::io::Result<()> {
             .route("/login", web::post().to(login))
             .service(
                 web::scope("/orders")
+                    .wrap(from_fn(reject_anonymous_users))
                     .route("/", web::get().to(get_orders))
                     .route("/", web::post().to(post_order))
                     .route("/{id}", web::get().to(get_order))
@@ -442,4 +455,55 @@ async fn main() -> std::io::Result<()> {
     .bind_rustls_0_23(("127.0.0.1", 3001), config)?
     .run()
     .await
+}
+
+pub async fn reject_anonymous_users(
+    mut req: ServiceRequest,
+    next: Next<impl MessageBody>,
+) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
+    let _session = {
+        let (_http_request, _payload) = req.parts_mut();
+        let _d: &Data<AppData> = _http_request.app_data().unwrap();
+        tracing::info!("===d: {_d:?}\n");
+        Ok::<(), actix_web::Error>(())
+        // TypedSession::from_request(http_request, payload).await
+    }?;
+    let _data: &Data<AppData> = req.app_data().unwrap();
+    let _response = see_other("/login");
+    tracing::info!("===r: {_response:?}\n===da: {_data:?}");
+    let result: Result<(), _> = Err(Error::Auth("nope".into()));
+    let _ok = result;
+    let mut response = next.call(req).await?;
+    response
+        .response_mut()
+        .add_cookie(&Cookie::new("hi_cookie", "i'm sweet"))?;
+    // response.add_cookie(actix_web::http::Cookie::new("my_cookie", "hi"))?;
+    Ok(response)
+    //next.call(req).await
+    // let e = anyhow::anyhow!("The user has not logged in");
+    // Err(InternalError::from_response("not able".to_string().into(), response).into())
+    // match session.get_user_id().map_err(e500)? {
+    //     Some(user_id) => {
+    //         req.extensions_mut().insert(UserId(user_id));
+    //         next.call(req).await
+    //     }
+    //     None => {
+    //         let response = see_other("/login");
+    //         let e = anyhow::anyhow!("The user has not logged in");
+    //         Err(InternalError::from_response(e, response).into())
+    //     }
+    // }
+}
+// Return an opaque 500 while preserving the error root's cause for logging.
+pub fn e500<T>(e: T) -> actix_web::Error
+where
+    T: std::fmt::Debug + std::fmt::Display + 'static,
+{
+    actix_web::error::ErrorInternalServerError(e)
+}
+
+pub fn see_other(location: &str) -> HttpResponse {
+    HttpResponse::SeeOther()
+        .insert_header((LOCATION, location))
+        .finish()
 }
