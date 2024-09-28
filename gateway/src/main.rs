@@ -531,14 +531,27 @@ async fn echo_heartbeat_ws(
     stream: web::Payload,
     app_data: web::Data<AppData>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
-    rt::spawn(async move {});
+    let (res, mut session, _msg_stream) = actix_ws::handle(&req, stream)?;
+    rt::spawn(async move {
+        let pool = &app_data.clone().pool;
+        let mut listener = PgListener::connect_with(pool).await.unwrap();
+        listener.listen("orders").await.unwrap();
+        tracing::info!("started to listen to orders");
+        while let Ok(notification) = listener.recv().await {
+            let message = notification.payload().to_string();
+            tracing::info!("Received notification: {}", message);
+            if let Err(err) = session.text(message).await {
+                tracing::error!("{err:?}");
+                break;
+            };
+        }
+    });
     // spawn websocket handler (and don't await it) so that the response is returned immediately
-    rt::spawn(handler::echo_heartbeat_ws(
-        session,
-        msg_stream,
-        app_data.clone(),
-    ));
+    // rt::spawn(handler::echo_heartbeat_ws(
+    //     session,
+    //     msg_stream,
+    //     app_data.clone(),
+    // ));
     Ok(res)
 }
 
