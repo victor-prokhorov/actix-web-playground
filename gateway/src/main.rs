@@ -224,6 +224,13 @@ struct OrderInput {
     content: Option<String>,
 }
 
+#[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
+struct Order {
+    id: Uuid,
+    user_id: Option<Uuid>,
+    content: Option<String>,
+}
+
 async fn post_order(
     app_data: web::Data<AppData>,
     order_input: web::Json<OrderInput>,
@@ -275,53 +282,12 @@ async fn delete_order(
     Ok(HttpResponse::Ok().finish())
 }
 
-async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
-    let cookie = req.cookie("access_token");
-    if let Some(cookie) = cookie {
-        let access_token = cookie.value();
-        let access_token_data = decode::<Claims>(
-            access_token,
-            &DecodingKey::from_secret(&app_data.access_token_secret),
-            &Validation::default(),
-        );
-        match access_token_data {
-            Ok(token_data) => {
-                tracing::info!("access token found for a user");
-                if token_is_expiring(&token_data.claims) {
-                    tracing::info!("access token is expiring");
-                    let new_access_cookie = try_access_cookie_from_refresh_token(
-                        req.cookie("refresh_token"),
-                        &app_data.refresh_token_secret,
-                        &app_data.access_token_secret,
-                    )?;
-                    tracing::info!("issued new access token");
-                    return Ok(HttpResponse::Ok()
-                        .cookie(new_access_cookie)
-                        .body(format!(r#""token refreshed""#)));
-                }
-                Ok(HttpResponse::Ok().body(format!(r#""found a valid token""#)))
-            }
-            Err(err) => match err.kind() {
-                ErrorKind::ExpiredSignature => {
-                    let new_access_cookie = try_access_cookie_from_refresh_token(
-                        req.cookie("refresh_token"),
-                        &app_data.refresh_token_secret,
-                        &app_data.access_token_secret,
-                    )?;
-                    tracing::info!("issued new access token after expied signature");
-                    return Ok(HttpResponse::Ok()
-                        .cookie(new_access_cookie)
-                        .body(format!(r#""token refreshed after expired signature""#,)));
-                }
-                _ => {
-                    tracing::error!("{err:?}");
-                    Ok(HttpResponse::Unauthorized().finish())
-                }
-            },
-        }
-    } else {
-        Ok(HttpResponse::Unauthorized().finish())
-    }
+async fn get_orders(app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
+    let orders: Vec<Order> = sqlx::query_as!(Order, "SELECT id, user_id, content FROM orders")
+        .fetch_all(&app_data.pool)
+        .await
+        .map_err(|err| Error::Db(err.into()))?;
+    Ok(HttpResponse::Ok().json(orders))
 }
 
 type GenericError = Box<dyn std::error::Error + Send + Sync>;
@@ -458,41 +424,73 @@ async fn main() -> std::io::Result<()> {
 }
 
 pub async fn reject_anonymous_users(
-    mut req: ServiceRequest,
+    req: ServiceRequest,
     next: Next<impl MessageBody>,
 ) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
-    let _session = {
-        let (_http_request, _payload) = req.parts_mut();
-        let _d: &Data<AppData> = _http_request.app_data().unwrap();
-        tracing::info!("===d: {_d:?}\n");
-        Ok::<(), actix_web::Error>(())
-        // TypedSession::from_request(http_request, payload).await
-    }?;
-    let _data: &Data<AppData> = req.app_data().unwrap();
-    let _response = see_other("/login");
-    tracing::info!("===r: {_response:?}\n===da: {_data:?}");
-    let result: Result<(), _> = Err(Error::Auth("nope".into()));
-    let _ok = result;
+    // let _session = {
+    //     let (_http_request, _payload) = req.parts_mut();
+    //     let _d: &Data<AppData> = _http_request.app_data().unwrap();
+    //     tracing::info!("===d: {_d:?}\n");
+    //     Ok::<(), actix_web::Error>(())
+    // }?;
+    // let _data: &Data<AppData> = req.app_data().unwrap();
+    // let _response = see_other("/login");
+    // tracing::info!("===r: {_response:?}\n===da: {_data:?}");
+    // let result: Result<(), _> = Err(Error::Auth("nope".into()));
+    // let _ok = result;
+    // response
+    //     .response_mut()
+    //     .add_cookie(&Cookie::new("hi_cookie", "i'm sweet"))?;
+    // Ok(response);
+    /////////////
+    let app_data: Data<AppData> = req
+        .app_data()
+        .cloned()
+        .expect("failed to exctract app state");
+    let access_cookie = req.cookie("access_token");
+    let refresh_cookie = req.cookie("refresh_token");
     let mut response = next.call(req).await?;
-    response
-        .response_mut()
-        .add_cookie(&Cookie::new("hi_cookie", "i'm sweet"))?;
-    // response.add_cookie(actix_web::http::Cookie::new("my_cookie", "hi"))?;
-    Ok(response)
-    //next.call(req).await
-    // let e = anyhow::anyhow!("The user has not logged in");
-    // Err(InternalError::from_response("not able".to_string().into(), response).into())
-    // match session.get_user_id().map_err(e500)? {
-    //     Some(user_id) => {
-    //         req.extensions_mut().insert(UserId(user_id));
-    //         next.call(req).await
-    //     }
-    //     None => {
-    //         let response = see_other("/login");
-    //         let e = anyhow::anyhow!("The user has not logged in");
-    //         Err(InternalError::from_response(e, response).into())
-    //     }
-    // }
+    if let Some(cookie) = access_cookie {
+        let access_token = cookie.value();
+        let access_token_data = decode::<Claims>(
+            access_token,
+            &DecodingKey::from_secret(&app_data.access_token_secret),
+            &Validation::default(),
+        );
+        match access_token_data {
+            Ok(token_data) => {
+                tracing::info!("access token found for a user");
+                if token_is_expiring(&token_data.claims) {
+                    tracing::info!("access token is expiring");
+                    let new_access_cookie = try_access_cookie_from_refresh_token(
+                        refresh_cookie,
+                        &app_data.refresh_token_secret,
+                        &app_data.access_token_secret,
+                    )?;
+                    tracing::info!("issued new access token");
+                    response.response_mut().add_cookie(&new_access_cookie)?;
+                    return Ok(response);
+                }
+                tracing::info!("found valid existing token");
+                Ok(response)
+            }
+            Err(err) => match err.kind() {
+                ErrorKind::ExpiredSignature => {
+                    let new_access_cookie = try_access_cookie_from_refresh_token(
+                        refresh_cookie,
+                        &app_data.refresh_token_secret,
+                        &app_data.access_token_secret,
+                    )?;
+                    tracing::info!("issued new access token after expied signature");
+                    response.response_mut().add_cookie(&new_access_cookie)?;
+                    return Ok(response);
+                }
+                _ => Err(Error::Auth(err.into()).into()),
+            },
+        }
+    } else {
+        Err(Error::Auth("anonymous user without a cookie".into()).into())
+    }
 }
 // Return an opaque 500 while preserving the error root's cause for logging.
 pub fn e500<T>(e: T) -> actix_web::Error
