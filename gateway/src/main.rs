@@ -11,6 +11,7 @@ use actix_web::{
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
 use core::fmt;
+use futures_util::StreamExt;
 use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
@@ -18,9 +19,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgListener, FromRow, PgPool};
 use std::{
     env,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc::{self, Receiver};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -48,11 +48,14 @@ struct AppData {
     pool: PgPool,
     access_token_secret: Vec<u8>,
     refresh_token_secret: Vec<u8>,
-    rx: Receiver<String>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
 const REFRESH_TOKEN_EXPIRATION: usize = 60 * 60 * 24 * 7;
+/// Should be half (or less) of the acceptable client timeout.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+/// How long before lack of client response causes a timeout.
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 async fn signup(
     user_input: web::Form<UserInput>,
@@ -379,19 +382,6 @@ fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
     }
 }
 
-async fn listen_for_notifications(pool: &PgPool, tx: mpsc::Sender<String>) {
-    let mut listener = PgListener::connect_with(&pool).await.unwrap();
-    listener.listen("orders").await.unwrap();
-    tracing::info!("started to listen to orders");
-    while let Ok(notification) = listener.recv().await {
-        let message = notification.payload().to_string();
-        tracing::info!("Received notification: {}", message);
-        if tx.send(message).await.is_err() {
-            break;
-        }
-    }
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -409,16 +399,10 @@ async fn main() -> std::io::Result<()> {
     let pool = PgPool::connect(&database_url)
         .await
         .expect("failed to create a connection pool to db");
-    let (tx, rx) = mpsc::channel(32);
-    let pool_clone = pool.clone();
-    tokio::spawn(async move {
-        listen_for_notifications(&pool_clone, tx).await;
-    });
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
         refresh_token_secret,
-        rx,
     });
     HttpServer::new(move || {
         App::new()
@@ -442,7 +426,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/{id}", web::put().to(put_order))
                     .route("/{id}", web::delete().to(delete_order)),
             )
-            .service(web::resource("/ws").route(web::get().to(echo_heartbeat_ws)))
+            .service(web::resource("/ws").route(web::get().to(orders_ws)))
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
@@ -452,106 +436,76 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-mod handler {
-    use crate::AppData;
-    use actix_web::web;
-    use actix_ws::Message;
-    use futures_util::{
-        future::{self, Either},
-        StreamExt as _,
-    };
-    use std::time::{Duration, Instant};
-    use tokio::{pin, time::interval};
-
-    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-    const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-
-    pub async fn echo_heartbeat_ws(
-        mut session: actix_ws::Session,
-        mut msg_stream: actix_ws::MessageStream,
-        app_data: web::Data<AppData>,
-    ) {
-        log::info!("connected {app_data:?}");
-        let mut last_heartbeat = Instant::now();
-        let mut interval = interval(HEARTBEAT_INTERVAL);
-        let reason = loop {
-            let tick = interval.tick();
-            pin!(tick);
-            match future::select(msg_stream.next(), tick).await {
-                Either::Left((Some(Ok(msg)), _)) => {
-                    log::debug!("msg: {msg:?}");
-                    match msg {
-                        Message::Text(text) => {
-                            log::info!("text");
-                            session.text(text).await.unwrap();
-                        }
-                        Message::Binary(bin) => {
-                            log::info!("bin");
-                            session.binary(bin).await.unwrap();
-                        }
-                        Message::Close(reason) => {
-                            break reason;
-                        }
-                        Message::Ping(bytes) => {
-                            last_heartbeat = Instant::now();
-                            let _ = session.pong(&bytes).await;
-                        }
-                        Message::Pong(_) => {
-                            last_heartbeat = Instant::now();
-                        }
-                        Message::Continuation(_) => {
-                            log::warn!("no support for continuation frames");
-                        }
-                        Message::Nop => {}
-                    };
-                }
-                Either::Left((Some(Err(err)), _)) => {
-                    log::error!("{}", err);
-                    break None;
-                }
-                Either::Left((None, _)) => break None,
-                Either::Right((_inst, _)) => {
-                    if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
-                        log::info!(
-                        "client has not sent heartbeat in over {CLIENT_TIMEOUT:?}; disconnecting"
-                    );
-                        break None;
-                    }
-                    let _ = session.ping(b"").await;
-                }
-            }
-        };
-        let _ = session.close(reason).await;
-        log::info!("disconnected");
-    }
-}
-
-async fn echo_heartbeat_ws(
+async fn orders_ws(
     req: HttpRequest,
     stream: web::Payload,
     app_data: web::Data<AppData>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let (res, mut session, _msg_stream) = actix_ws::handle(&req, stream)?;
+    // do not await!
+    let (res, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
+    let app_data = app_data.clone();
+    let pool = &app_data.pool;
+    let mut listener = PgListener::connect_with(pool).await.unwrap();
+    listener.listen("orders").await.unwrap();
+    tracing::info!("started listening to orders");
     rt::spawn(async move {
-        let pool = &app_data.clone().pool;
-        let mut listener = PgListener::connect_with(pool).await.unwrap();
-        listener.listen("orders").await.unwrap();
-        tracing::info!("started to listen to orders");
-        while let Ok(notification) = listener.recv().await {
-            let message = notification.payload().to_string();
-            tracing::info!("Received notification: {}", message);
-            if let Err(err) = session.text(message).await {
-                tracing::error!("{err:?}");
-                break;
-            };
+        let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
+        let mut last_heartbeat = Instant::now();
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
+                        tracing::info!("timed out");
+                        break;
+                    }
+                    if let Err(err) = session.ping(b"ping").await {
+                        tracing::error!("{err:?}");
+                        break;
+                    }
+                }
+                Some(msg) = msg_stream.next() => {
+                    match msg {
+                        Ok(actix_ws::Message::Ping(ping)) => {
+                            tracing::info!("received ping from client");
+                            if let Err(err) = session.pong(&ping).await {
+                                tracing::error!("{err:?}");
+                                break;
+                            }
+                        }
+                        Ok(actix_ws::Message::Pong(_)) => {
+                            tracing::info!("received pong from client");
+                            last_heartbeat = Instant::now();
+                        }
+                        Ok(actix_ws::Message::Text(text)) => {
+                            tracing::info!("text: {}", text);
+                        }
+                        Ok(actix_ws::Message::Close(reason)) => {
+                            tracing::info!("closed: {:?}", reason);
+                            break;
+                        }
+                        Err(err) => {
+                            tracing::error!("error: {err:?}");
+                            break;
+                        }
+                        _ => {}
+                    }
+                },
+                Ok(notification) = listener.recv() => {
+                    let message = notification.payload().to_string();
+                    tracing::info!("pg notified: {}", message);
+                    if let Err(err) = session.text(message).await {
+                        tracing::error!("failed to send message to client: {err:?}");
+                        break;
+                    }
+                },
+                else => {
+                    tracing::error!("else");
+                    break;
+                }
+            }
         }
+        tracing::info!("session closed");
     });
-    // spawn websocket handler (and don't await it) so that the response is returned immediately
-    // rt::spawn(handler::echo_heartbeat_ws(
-    //     session,
-    //     msg_stream,
-    //     app_data.clone(),
-    // ));
     Ok(res)
 }
 
