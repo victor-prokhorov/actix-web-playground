@@ -15,11 +15,12 @@ use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use sqlx::{postgres::PgListener, FromRow, PgPool};
 use std::{
     env,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::mpsc::{self, Receiver};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -47,6 +48,7 @@ struct AppData {
     pool: PgPool,
     access_token_secret: Vec<u8>,
     refresh_token_secret: Vec<u8>,
+    rx: Receiver<String>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
@@ -377,6 +379,19 @@ fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
     }
 }
 
+async fn listen_for_notifications(pool: &PgPool, tx: mpsc::Sender<String>) {
+    let mut listener = PgListener::connect_with(&pool).await.unwrap();
+    listener.listen("orders").await.unwrap();
+    tracing::info!("started to listen to orders");
+    while let Ok(notification) = listener.recv().await {
+        let message = notification.payload().to_string();
+        tracing::info!("Received notification: {}", message);
+        if tx.send(message).await.is_err() {
+            break;
+        }
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -394,10 +409,16 @@ async fn main() -> std::io::Result<()> {
     let pool = PgPool::connect(&database_url)
         .await
         .expect("failed to create a connection pool to db");
+    let (tx, rx) = mpsc::channel(32);
+    let pool_clone = pool.clone();
+    tokio::spawn(async move {
+        listen_for_notifications(&pool_clone, tx).await;
+    });
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
         refresh_token_secret,
+        rx,
     });
     HttpServer::new(move || {
         App::new()
@@ -432,6 +453,8 @@ async fn main() -> std::io::Result<()> {
 }
 
 mod handler {
+    use crate::AppData;
+    use actix_web::web;
     use actix_ws::Message;
     use futures_util::{
         future::{self, Either},
@@ -446,8 +469,9 @@ mod handler {
     pub async fn echo_heartbeat_ws(
         mut session: actix_ws::Session,
         mut msg_stream: actix_ws::MessageStream,
+        app_data: web::Data<AppData>,
     ) {
-        log::info!("connected");
+        log::info!("connected {app_data:?}");
         let mut last_heartbeat = Instant::now();
         let mut interval = interval(HEARTBEAT_INTERVAL);
         let reason = loop {
@@ -458,21 +482,21 @@ mod handler {
                     log::debug!("msg: {msg:?}");
                     match msg {
                         Message::Text(text) => {
+                            log::info!("text");
                             session.text(text).await.unwrap();
                         }
                         Message::Binary(bin) => {
+                            log::info!("bin");
                             session.binary(bin).await.unwrap();
                         }
                         Message::Close(reason) => {
                             break reason;
                         }
                         Message::Ping(bytes) => {
-                            log::info!("ping");
                             last_heartbeat = Instant::now();
                             let _ = session.pong(&bytes).await;
                         }
                         Message::Pong(_) => {
-                            log::info!("pong");
                             last_heartbeat = Instant::now();
                         }
                         Message::Continuation(_) => {
@@ -505,12 +529,16 @@ mod handler {
 async fn echo_heartbeat_ws(
     req: HttpRequest,
     stream: web::Payload,
+    app_data: web::Data<AppData>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
-
+    rt::spawn(async move {});
     // spawn websocket handler (and don't await it) so that the response is returned immediately
-    rt::spawn(handler::echo_heartbeat_ws(session, msg_stream));
-
+    rt::spawn(handler::echo_heartbeat_ws(
+        session,
+        msg_stream,
+        app_data.clone(),
+    ));
     Ok(res)
 }
 
