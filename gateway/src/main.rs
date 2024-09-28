@@ -23,27 +23,12 @@ use std::{
     env,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tonic::Request;
+use tonic::{metadata::MetadataValue, transport::Channel, Request};
 use tracing::instrument;
 use uuid::Uuid;
 
 pub mod hello_world {
     tonic::include_proto!("helloworld");
-}
-
-// #[tokio::main]
-async fn not_main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = GreeterClient::connect("http://[::1]:50051").await?;
-
-    let request = tonic::Request::new(HelloRequest {
-        name: "Tonic".into(),
-    });
-
-    let response = client.say_hello(request).await?;
-
-    println!("RESPONSE={:?}", response);
-
-    Ok(())
 }
 
 #[derive(Deserialize, Debug)]
@@ -322,18 +307,38 @@ async fn get_orders(app_data: web::Data<AppData>) -> Result<HttpResponse, Error>
         .await
         .map_err(|err| Error::Db(err.into()))?;
 
-    // TODO: init client once store in app_state i guess
-    let mut client = GreeterClient::connect("http://[::1]:50051")
+    let channel = Channel::from_static("http://[::1]:50051")
+        .connect()
         .await
         .map_err(|e| Error::Grpc(e.into()))?;
-    let request = Request::new(HelloRequest {
+    let token: MetadataValue<_> = "Bearer some-auth-token"
+        .parse()
+        .map_err(|_| Error::Grpc("failed to parse token".into()))?;
+    let mut client = GreeterClient::with_interceptor(channel, move |mut req: Request<()>| {
+        req.metadata_mut().insert("authorization", token.clone());
+        Ok(req)
+    });
+    let request = tonic::Request::new(HelloRequest {
         name: "Tonic".into(),
     });
+
     let response = client
         .say_hello(request)
         .await
-        .map_err(|e| Error::Grpc(e.into()))?;
-    tracing::info!("RESPONSE={:?}", response);
+        .map_err(|err| Error::Grpc(err.into()))?;
+    println!("RESPONSE={:?}", response);
+    // // TODO: init client once store in app_state i guess
+    // let mut client = GreeterClient::connect("http://[::1]:50051")
+    //     .await
+    //     .map_err(|e| Error::Grpc(e.into()))?;
+    // let request = Request::new(HelloRequest {
+    //     name: "Tonic".into(),
+    // });
+    // let response = client
+    //     .say_hello(request)
+    //     .await
+    //     .map_err(|e| Error::Grpc(e.into()))?;
+    // tracing::info!("RESPONSE={:?}", response);
 
     Ok(HttpResponse::Ok().json(orders))
 }
