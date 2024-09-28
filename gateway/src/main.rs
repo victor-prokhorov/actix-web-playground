@@ -12,6 +12,8 @@ use actix_web::{
 use bcrypt::{hash, verify, DEFAULT_COST};
 use core::fmt;
 use futures_util::StreamExt;
+use hello_world::greeter_client::GreeterClient;
+use hello_world::HelloRequest;
 use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
@@ -21,8 +23,28 @@ use std::{
     env,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tonic::Request;
 use tracing::instrument;
 use uuid::Uuid;
+
+pub mod hello_world {
+    tonic::include_proto!("helloworld");
+}
+
+// #[tokio::main]
+async fn not_main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = GreeterClient::connect("http://[::1]:50051").await?;
+
+    let request = tonic::Request::new(HelloRequest {
+        name: "Tonic".into(),
+    });
+
+    let response = client.say_hello(request).await?;
+
+    println!("RESPONSE={:?}", response);
+
+    Ok(())
+}
 
 #[derive(Deserialize, Debug)]
 struct UserInput {
@@ -299,6 +321,20 @@ async fn get_orders(app_data: web::Data<AppData>) -> Result<HttpResponse, Error>
         .fetch_all(&app_data.pool)
         .await
         .map_err(|err| Error::Db(err.into()))?;
+
+    // TODO: init client once store in app_state i guess
+    let mut client = GreeterClient::connect("http://[::1]:50051")
+        .await
+        .map_err(|e| Error::Grpc(e.into()))?;
+    let request = Request::new(HelloRequest {
+        name: "Tonic".into(),
+    });
+    let response = client
+        .say_hello(request)
+        .await
+        .map_err(|e| Error::Grpc(e.into()))?;
+    tracing::info!("RESPONSE={:?}", response);
+
     Ok(HttpResponse::Ok().json(orders))
 }
 
@@ -313,6 +349,7 @@ enum Error {
     UserNotFound(GenericError),
     Db(GenericError),
     Auth(GenericError),
+    Grpc(GenericError),
 }
 
 impl fmt::Display for Error {
@@ -346,6 +383,10 @@ impl ResponseError for Error {
             Error::Auth(internal) => {
                 tracing::error!("{internal:?}");
                 HttpResponse::Unauthorized().finish()
+            }
+            Error::Grpc(internal) => {
+                tracing::error!("{internal:?}");
+                HttpResponse::InternalServerError().finish()
             }
         }
     }
