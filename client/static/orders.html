@@ -6,5 +6,52 @@
     <script src="assets/js/orders.js" defer></script>
 </head>
 <body>
+    <h3>Get All Orders</h3>
+    <form id="getOrdersForm">
+        <button type="submit">Get All Orders</button>
+    </form>
+
+    <h3>Get Order By ID</h3>
+    <form id="getOrderForm">
+        <label for="orderId">Order ID:</label>
+        <input type="text" id="orderId" required>
+        <button type="submit">Get Order</button>
+    </form>
+
+    <h3>Create New Order</h3>
+    <form id="postOrderForm">
+        <label for="newOrderId">Order ID:</label>
+        <input type="text" id="newOrderId" required>
+
+        <label for="newUserId">User ID:</label>
+        <input type="text" id="newUserId">
+
+        <label for="newContent">Content:</label>
+        <input type="text" id="newContent">
+
+        <button type="submit">Create Order</button>
+    </form>
+
+    <h3>Update Order</h3>
+    <form id="putOrderForm">
+        <label for="updateOrderId">Order ID:</label>
+        <input type="text" id="updateOrderId" required>
+
+        <label for="updateUserId">User ID:</label>
+        <input type="text" id="updateUserId">
+
+        <label for="updateContent">Content:</label>
+        <input type="text" id="updateContent">
+
+        <button type="submit">Update Order</button>
+    </form>
+
+    <h3>Delete Order</h3>
+    <form id="deleteOrderForm">
+        <label for="deleteOrderId">Order ID:</label>
+        <input type="text" id="deleteOrderId" required>
+
+        <button type="submit">Delete Order</button>
+    </form>
 </body>
 </html>
