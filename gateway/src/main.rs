@@ -21,9 +21,18 @@ use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgListener, FromRow, PgPool};
 use std::{
     env,
+    sync::{
+        mpsc::{self, Receiver, Sender, TryRecvError},
+        Mutex,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tonic::{metadata::MetadataValue, transport::Channel, Request};
+use tonic::{
+    metadata::{Ascii, MetadataValue},
+    service::{interceptor::InterceptedService, Interceptor},
+    transport::Channel,
+    Status,
+};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -55,6 +64,9 @@ struct AppData {
     pool: PgPool,
     access_token_secret: Vec<u8>,
     refresh_token_secret: Vec<u8>,
+    inventory_service_client:
+        Mutex<InventoryServiceClient<InterceptedService<Channel, GrpcAuthInterceptor>>>,
+    token_tx: Sender<String>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 15;
@@ -314,29 +326,31 @@ async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<Ht
         .await
         .map_err(|err| Error::Db(err.into()))?;
 
-    // TODO: init client once store in app_state i guess
-    let channel = Channel::from_static("http://[::1]:50051")
-        .connect()
-        .await
-        .map_err(|e| Error::Grpc(e.into()))?;
-    let Some(t) = req.cookie("access_token") else {
+    let Some(cookie) = req.cookie("access_token") else {
         return Err(Error::Auth(
             "was about to send grpc request but didn't found a token; aborting".into(),
         ));
     };
-    let token: MetadataValue<_> = t
+    let token: MetadataValue<Ascii> = cookie
         .value()
         .parse()
         .map_err(|_| Error::Grpc("failed to parse token into metadata".into()))?;
-    let mut client =
-        InventoryServiceClient::with_interceptor(channel, move |mut req: Request<()>| {
-            req.metadata_mut().insert("authorization", token.clone());
-            Ok(req)
-        });
+    let Ok(_) = app_data.token_tx.send(
+        token
+            .to_str()
+            .map_err(|_| Error::Grpc("converting token to a string failed".into()))?
+            .to_string(),
+    ) else {
+        return Err(Error::Grpc("failed to send new token to update".into()));
+    };
+    tracing::info!("succesfuly send message via sync channel");
     let request = tonic::Request::new(GetStockRequest {
         product_ids: vec![],
     });
-    let response = client
+    let response = app_data
+        .inventory_service_client
+        .lock()
+        .expect("failed to acquire mutex on inventory service client")
         .get_stock(request)
         .await
         .map_err(|err| Error::Grpc(err.into()))?;
@@ -432,6 +446,27 @@ fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
     }
 }
 
+struct GrpcAuthInterceptor {
+    token_rx: Receiver<String>,
+}
+
+impl Interceptor for GrpcAuthInterceptor {
+    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        tracing::info!("intercepting grpc request to add token as metadata");
+        match self.token_rx.try_recv() {
+            Ok(token) => {
+                tracing::info!("succesfully received new token");
+                request
+                    .metadata_mut()
+                    .insert("authorization", token.parse().unwrap());
+                Ok(request)
+            }
+            Err(TryRecvError::Empty) => Err(Status::unauthenticated("no token available")),
+            Err(TryRecvError::Disconnected) => Err(Status::internal("token channel disconnected")),
+        }
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -449,10 +484,20 @@ async fn main() -> std::io::Result<()> {
     let pool = PgPool::connect(&database_url)
         .await
         .expect("failed to create a connection pool to db");
+    let channel = Channel::from_static("http://[::1]:50051")
+        .connect()
+        .await
+        .map_err(|e| Error::Grpc(e.into()))
+        .expect("failed to establish connection to gRPC server");
+    let (tx, rx) = mpsc::channel();
+    let inventory_service_client =
+        InventoryServiceClient::with_interceptor(channel, GrpcAuthInterceptor { token_rx: rx });
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
         refresh_token_secret,
+        inventory_service_client: Mutex::new(inventory_service_client),
+        token_tx: tx,
     });
     HttpServer::new(move || {
         App::new()

@@ -34,3 +34,5 @@ grpcurl -plaintext \
     '[::1]:50051' \
     inventory.InventoryService/GetStock
 ```
+- cloning the `Channel` type is cheap and encouraged
+- [interceptor example build, how to reuse client](https://github.com/hyperium/tonic/blob/master/examples/src/interceptor/client.rs)
