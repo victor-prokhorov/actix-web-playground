@@ -1,6 +1,13 @@
 use dotenv::dotenv;
-use hello_world::greeter_server::{Greeter, GreeterServer};
-use hello_world::{HelloReply, HelloRequest};
+// use hello_world::greeter_server::{Greeter, GreeterServer};
+// use hello_world::{HelloReply, HelloRequest};
+use common::inventory::inventory_service_server::{
+    InventoryService, InventoryServiceServer, SERVICE_NAME,
+};
+use common::inventory::{
+    GetStockRequest, GetStockResponse, Product, ProductStock, UpdateStockRequest,
+    UpdateStockResponse,
+};
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -8,28 +15,40 @@ use std::env;
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
-pub mod hello_world {
-    tonic::include_proto!("helloworld");
-}
-
-pub struct MyGreeter {
+// pub mod hello_world {
+//     tonic::include_proto!("helloworld");
+// }
+//
+pub struct InventoryServer {
     pool: PgPool,
 }
 
 #[tonic::async_trait]
-impl Greeter for MyGreeter {
-    async fn say_hello(
+impl InventoryService for InventoryServer {
+    async fn update_stock(
         &self,
-        request: Request<HelloRequest>,
-    ) -> Result<Response<HelloReply>, Status> {
-        println!("Got a request: {:?}", request);
-        let reply = HelloReply {
-            message: format!("Hello {}!", request.into_inner().name),
-        };
-        let r = sqlx::query!("SELECT 1 as x").fetch_one(&self.pool).await;
-        dbg!(r);
-        Ok(Response::new(reply))
+        _req: Request<UpdateStockRequest>,
+    ) -> Result<Response<UpdateStockResponse>, Status> {
+        todo!()
     }
+    async fn get_stock(
+        &self,
+        _req: Request<GetStockRequest>,
+    ) -> Result<Response<GetStockResponse>, Status> {
+        todo!()
+    }
+    // async fn say_hello(
+    //     &self,
+    //     request: Request<HelloRequest>,
+    // ) -> Result<Response<HelloReply>, Status> {
+    //     println!("Got a request: {:?}", request);
+    //     let reply = HelloReply {
+    //         message: format!("Hello {}!", request.into_inner().name),
+    //     };
+    //     let r = sqlx::query!("SELECT 1 as x").fetch_one(&self.pool).await;
+    //     dbg!(r);
+    //     Ok(Response::new(reply))
+    // }
 }
 
 #[tokio::main]
@@ -43,9 +62,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         r.is_ok_and(|x| x.ok_check.is_some_and(|x| x == 1)),
         "make sure you spawned db"
     );
-    let greeter = MyGreeter { pool };
+    let inventory_server = InventoryServer { pool };
     Server::builder()
-        .add_service(GreeterServer::with_interceptor(greeter, check_auth))
+        .add_service(InventoryServiceServer::with_interceptor(
+            inventory_server,
+            check_auth,
+        ))
         .serve(addr)
         .await?;
     Ok(())

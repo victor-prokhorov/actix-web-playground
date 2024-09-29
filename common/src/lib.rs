@@ -2,12 +2,8 @@ use rustls::{pki_types::PrivateKeyDer, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::{fs::File, io::BufReader};
 
-// mod inventory {
-//     tonic::include_proto!("inventory");
-// }
-
-// #[derive(Debug)]
-// pub use inventory::Product;
+#[path = "./inventory/inventory.rs"]
+pub mod inventory;
 
 pub fn load_rustls_config() -> rustls::ServerConfig {
     rustls::crypto::aws_lc_rs::default_provider()

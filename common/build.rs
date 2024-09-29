@@ -10,8 +10,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     tonic_build::configure()
         .build_server(true)
         .out_dir(pdir)
-        .type_attribute("Product", "#[derive(Debug, Deserialize, Serialize)]")
-        .type_attribute("ProductStock", "#[derive(Debug, Deserialize, Serialize)]")
+        .type_attribute("Product", "#[derive(serde::Deserialize, serde::Serialize)]")
+        .type_attribute(
+            "ProductStock",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
         .compile_protos(&[pf], &["."])?;
     Ok(())
 }
