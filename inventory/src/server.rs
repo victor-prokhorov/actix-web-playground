@@ -1,6 +1,3 @@
-use dotenv::dotenv;
-// use hello_world::greeter_server::{Greeter, GreeterServer};
-// use hello_world::{HelloReply, HelloRequest};
 use common::inventory::inventory_service_server::{
     InventoryService, InventoryServiceServer, SERVICE_NAME,
 };
@@ -8,17 +5,15 @@ use common::inventory::{
     GetStockRequest, GetStockResponse, Product, ProductStock, UpdateStockRequest,
     UpdateStockResponse,
 };
+use dotenv::dotenv;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::env;
 use tonic::{transport::Server, Request, Response, Status};
+use tracing;
 use uuid::Uuid;
 
-// pub mod hello_world {
-//     tonic::include_proto!("helloworld");
-// }
-//
 pub struct InventoryServer {
     pool: PgPool,
 }
@@ -27,32 +22,29 @@ pub struct InventoryServer {
 impl InventoryService for InventoryServer {
     async fn update_stock(
         &self,
-        _req: Request<UpdateStockRequest>,
+        req: Request<UpdateStockRequest>,
     ) -> Result<Response<UpdateStockResponse>, Status> {
-        todo!()
+        dbg!(req);
+        Err(Status::internal("nope :("))
     }
     async fn get_stock(
         &self,
-        _req: Request<GetStockRequest>,
+        req: Request<GetStockRequest>,
     ) -> Result<Response<GetStockResponse>, Status> {
-        todo!()
+        dbg!(req);
+        Ok(Response::new(GetStockResponse {
+            stocks: vec![ProductStock {
+                product_id: Uuid::new_v4().into(),
+                available_quantity: 666,
+            }],
+        }))
     }
-    // async fn say_hello(
-    //     &self,
-    //     request: Request<HelloRequest>,
-    // ) -> Result<Response<HelloReply>, Status> {
-    //     println!("Got a request: {:?}", request);
-    //     let reply = HelloReply {
-    //         message: format!("Hello {}!", request.into_inner().name),
-    //     };
-    //     let r = sqlx::query!("SELECT 1 as x").fetch_one(&self.pool).await;
-    //     dbg!(r);
-    //     Ok(Response::new(reply))
-    // }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    tracing::info!("{} init", SERVICE_NAME);
     dotenv().ok();
     let addr = "[::1]:50051".parse()?;
     let database_url = env::var("DATABASE_URL").unwrap();
@@ -80,7 +72,14 @@ struct Claims {
 }
 
 fn check_auth(req: Request<()>) -> Result<Request<()>, Status> {
-    dotenv().ok();
+    tracing::info!(
+        "i need one for grpcurl\n{}\n",
+        req.metadata()
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
     let access_token = match req.metadata().get("authorization") {
         Some(t) => match t.to_str() {
             Ok(s) => s,

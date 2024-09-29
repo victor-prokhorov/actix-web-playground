@@ -10,10 +10,10 @@ use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
+use common::inventory::inventory_service_client::InventoryServiceClient;
+use common::inventory::GetStockRequest;
 use core::fmt;
 use futures_util::StreamExt;
-use hello_world::greeter_client::GreeterClient;
-use hello_world::HelloRequest;
 use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
@@ -57,7 +57,7 @@ struct AppData {
     refresh_token_secret: Vec<u8>,
 }
 
-const ACCESS_TOKEN_EXPIRATION: usize = 60 * 2;
+const ACCESS_TOKEN_EXPIRATION: usize = 60 * 15;
 const REFRESH_TOKEN_EXPIRATION: usize = 60 * 60 * 24 * 7;
 /// Should be half (or less) of the acceptable client timeout.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -164,8 +164,7 @@ async fn find_user_by_username(pool: &PgPool, user_input: &UserInput) -> Result<
 fn token_is_expiring(claims: &Claims) -> bool {
     let time_left = claims.exp.saturating_sub(unix_timestamp());
     tracing::info!("access token expires in {} seconds", time_left,);
-    // 10 seconds window
-    time_left < 110
+    time_left < 120
 }
 
 fn unix_timestamp() -> usize {
@@ -315,6 +314,7 @@ async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<Ht
         .await
         .map_err(|err| Error::Db(err.into()))?;
 
+    // TODO: init client once store in app_state i guess
     let channel = Channel::from_static("http://[::1]:50051")
         .connect()
         .await
@@ -328,30 +328,19 @@ async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<Ht
         .value()
         .parse()
         .map_err(|_| Error::Grpc("failed to parse token into metadata".into()))?;
-    let mut client = GreeterClient::with_interceptor(channel, move |mut req: Request<()>| {
-        req.metadata_mut().insert("authorization", token.clone());
-        Ok(req)
-    });
-    let request = tonic::Request::new(HelloRequest {
-        name: "Tonic".into(),
+    let mut client =
+        InventoryServiceClient::with_interceptor(channel, move |mut req: Request<()>| {
+            req.metadata_mut().insert("authorization", token.clone());
+            Ok(req)
+        });
+    let request = tonic::Request::new(GetStockRequest {
+        product_ids: vec![],
     });
     let response = client
-        .say_hello(request)
+        .get_stock(request)
         .await
         .map_err(|err| Error::Grpc(err.into()))?;
     println!("RESPONSE={:?}", response);
-    // // TODO: init client once store in app_state i guess
-    // let mut client = GreeterClient::connect("http://[::1]:50051")
-    //     .await
-    //     .map_err(|e| Error::Grpc(e.into()))?;
-    // let request = Request::new(HelloRequest {
-    //     name: "Tonic".into(),
-    // });
-    // let response = client
-    //     .say_hello(request)
-    //     .await
-    //     .map_err(|e| Error::Grpc(e.into()))?;
-    // tracing::info!("RESPONSE={:?}", response);
 
     Ok(HttpResponse::Ok().json(orders))
 }

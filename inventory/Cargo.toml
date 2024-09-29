@@ -28,6 +28,9 @@ sqlx = { version = "0.8.2", default-features = false, features = [
     "migrate",
 ] }
 common = { path = "../common/" }
+tracing = "0.1.40"
+log = "0.4.22"
+env_logger = "0.11.5"
 
 [build-dependencies]
 tonic-build = "0.12.3"
