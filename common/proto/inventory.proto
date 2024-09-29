@@ -1,0 +1,27 @@
+syntax = "proto3";
+package inventory;
+service InventoryService {
+  rpc UpdateStock(UpdateStockRequest) returns (UpdateStockResponse);
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);
+}
+message Product {
+  string product_id = 1;
+  int32 quantity = 2;
+}
+message ProductStock {
+  string product_id = 1;
+  int32 available_quantity = 2;
+}
+message UpdateStockRequest {
+  string order_id = 1;
+  repeated Product products = 2;
+}
+message UpdateStockResponse {
+  bool success = 1;
+}
+message GetStockRequest {
+  repeated string product_ids = 1;
+}
+message GetStockResponse {
+  repeated ProductStock stocks = 1;
+}
