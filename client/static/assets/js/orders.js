@@ -1,10 +1,25 @@
+/**
+ * @typedef {import('../../../../common/common').Order} Order
+ */
+
 const BASE_URL = "https://127.0.0.1:3001/orders/";
+
+/**
+ * 
+ * @param {Array<Order>} orders 
+ */
+function processOrders(orders) {
+    for (const order of orders) {
+        console.log("processing...");
+        console.log({ order });
+    }
+}
 
 async function getOrders() {
     try {
         const resp = await fetch(BASE_URL, { credentials: 'include', method: 'GET' });
         const orders = await resp.json();
-        console.log(orders);
+        processOrders(orders);
     } catch (err) {
         console.error(err);
     }
@@ -27,7 +42,7 @@ async function postOrder(orderData) {
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                content: orderData.content, 
+                content: orderData.content,
                 id: orderData.id || null,
                 user_id: orderData.id || null,
             })

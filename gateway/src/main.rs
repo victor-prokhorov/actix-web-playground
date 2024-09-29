@@ -345,7 +345,7 @@ async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<Ht
     };
     tracing::info!("succesfuly send message via sync channel");
     let request = tonic::Request::new(GetStockRequest {
-        product_ids: vec![],
+        product_ids: orders.iter().map(|order| order.id.into()).collect(),
     });
     let response = app_data
         .inventory_service_client
