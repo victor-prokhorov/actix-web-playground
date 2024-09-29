@@ -1,8 +1,10 @@
+use dotenv::dotenv;
 use hello_world::greeter_server::{Greeter, GreeterServer};
 use hello_world::{HelloReply, HelloRequest};
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
-use tonic::metadata::MetadataValue;
+use sqlx::PgPool;
+use std::env;
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
@@ -10,8 +12,9 @@ pub mod hello_world {
     tonic::include_proto!("helloworld");
 }
 
-#[derive(Debug, Default)]
-pub struct MyGreeter {}
+pub struct MyGreeter {
+    pool: PgPool,
+}
 
 #[tonic::async_trait]
 impl Greeter for MyGreeter {
@@ -20,19 +23,27 @@ impl Greeter for MyGreeter {
         request: Request<HelloRequest>,
     ) -> Result<Response<HelloReply>, Status> {
         println!("Got a request: {:?}", request);
-
         let reply = HelloReply {
             message: format!("Hello {}!", request.into_inner().name),
         };
-
+        let r = sqlx::query!("SELECT 1 as x").fetch_one(&self.pool).await;
+        dbg!(r);
         Ok(Response::new(reply))
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv().ok();
     let addr = "[::1]:50051".parse()?;
-    let greeter = MyGreeter::default();
+    let database_url = env::var("DATABASE_URL").unwrap();
+    let pool = PgPool::connect(&database_url).await.unwrap();
+    let r = sqlx::query!("SELECT 1 AS ok_check").fetch_one(&pool).await;
+    assert!(
+        r.is_ok_and(|x| x.ok_check.is_some_and(|x| x == 1)),
+        "make sure you spawned db"
+    );
+    let greeter = MyGreeter { pool };
     Server::builder()
         .add_service(GreeterServer::with_interceptor(greeter, check_auth))
         .serve(addr)
@@ -45,9 +56,6 @@ struct Claims {
     exp: usize,
     sub: Uuid,
 }
-
-use dotenv::dotenv;
-use std::env;
 
 fn check_auth(req: Request<()>) -> Result<Request<()>, Status> {
     dotenv().ok();

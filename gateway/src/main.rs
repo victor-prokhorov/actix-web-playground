@@ -1,7 +1,7 @@
 use actix_cors::Cors;
 use actix_web::{
     body::MessageBody,
-    cookie::{time::OffsetDateTime, Cookie, CookieBuilder},
+    cookie::{time::OffsetDateTime, Cookie, CookieBuilder, SameSite},
     dev::{ServiceRequest, ServiceResponse},
     http::header::LOCATION,
     middleware::{from_fn, Logger, Next},
@@ -127,10 +127,14 @@ async fn login(
                 let refresh_token =
                     generate_token(user.id, refresh_token_exp, &app_data.refresh_token_secret);
                 let access_cookie = CookieBuilder::new("access_token", access_token)
+                    .same_site(SameSite::Lax)
+                    .path("/")
                     .http_only(true)
                     .secure(true)
                     .finish();
                 let refresh_cookie = CookieBuilder::new("refresh_token", refresh_token)
+                    .same_site(SameSite::Lax)
+                    .path("/")
                     .http_only(true)
                     .secure(true)
                     .finish();
@@ -188,15 +192,19 @@ async fn logout() -> impl Responder {
     tracing::info!("logout");
     let now = OffsetDateTime::now_utc();
     let access_cookie = CookieBuilder::new("access_token", "")
+        .path("/")
         .http_only(true)
         .secure(true)
+        .same_site(SameSite::Lax)
         // TODO:
         // i just found `add_removal_cookie` method i guess it's more readable then hand written
         .expires(Some(now))
         .finish();
     let refresh_cookie = CookieBuilder::new("refresh_token", "")
+        .path("/")
         .http_only(true)
         .secure(true)
+        .same_site(SameSite::Lax)
         .expires(Some(now))
         .finish();
     // client side redirect here
@@ -421,6 +429,8 @@ fn try_access_cookie_from_refresh_token<'refresh, 'access, 'cookie>(
                 access_token_secret,
             );
             let new_access_cookie = CookieBuilder::new("access_token", new_access_token)
+                .path("/")
+                .same_site(SameSite::Lax)
                 .http_only(true)
                 .secure(true)
                 .finish();
