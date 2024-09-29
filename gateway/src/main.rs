@@ -301,7 +301,7 @@ async fn delete_order(
     Ok(HttpResponse::Ok().finish())
 }
 
-async fn get_orders(app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
+async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
     let orders: Vec<Order> = sqlx::query_as!(Order, "SELECT id, user_id, content FROM orders")
         .fetch_all(&app_data.pool)
         .await
@@ -311,9 +311,15 @@ async fn get_orders(app_data: web::Data<AppData>) -> Result<HttpResponse, Error>
         .connect()
         .await
         .map_err(|e| Error::Grpc(e.into()))?;
-    let token: MetadataValue<_> = "Bearer some-auth-token"
+    let Some(t) = req.cookie("access_token") else {
+        return Err(Error::Auth(
+            "was about to send grpc request but didn't found a token; aborting".into(),
+        ));
+    };
+    let token: MetadataValue<_> = t
+        .value()
         .parse()
-        .map_err(|_| Error::Grpc("failed to parse token".into()))?;
+        .map_err(|_| Error::Grpc("failed to parse token into metadata".into()))?;
     let mut client = GreeterClient::with_interceptor(channel, move |mut req: Request<()>| {
         req.metadata_mut().insert("authorization", token.clone());
         Ok(req)
@@ -321,7 +327,6 @@ async fn get_orders(app_data: web::Data<AppData>) -> Result<HttpResponse, Error>
     let request = tonic::Request::new(HelloRequest {
         name: "Tonic".into(),
     });
-
     let response = client
         .say_hello(request)
         .await
