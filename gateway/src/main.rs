@@ -225,25 +225,27 @@ async fn logout() -> impl Responder {
         .finish()
 }
 
-#[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
-struct OrderContent {
-    content: Option<String>,
-}
+// #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
+// struct OrderContent {
+//     content: Option<String>,
+// }
 
 #[instrument]
 async fn get_order(
     id: web::Path<Uuid>,
     app_data: web::Data<AppData>,
 ) -> Result<HttpResponse, Error> {
-    let order: OrderContent = sqlx::query_as!(
-        OrderContent,
-        "SELECT content FROM orders WHERE id = $1",
-        id.into_inner()
-    )
-    .fetch_one(&app_data.pool)
-    .await
-    .map_err(|err| Error::Db(err.into()))?;
-    Ok(HttpResponse::Ok().json(order))
+    // TODO: implement common::Order
+    // let order: OrderContent = sqlx::query_as!(
+    //     OrderContent,
+    //     "SELECT content FROM orders WHERE id = $1",
+    //     id.into_inner()
+    // )
+    // .fetch_one(&app_data.pool)
+    // .await
+    // .map_err(|err| Error::Db(err.into()))?;
+    // Ok(HttpResponse::Ok().json(order))
+    todo!()
 }
 
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
@@ -254,14 +256,13 @@ struct OrderId {
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
 struct OrderInput {
     user_id: Option<Uuid>,
-    content: Option<String>,
 }
 
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
 struct Order {
     id: Uuid,
     user_id: Option<Uuid>,
-    content: Option<String>,
+    product_id: Uuid,
 }
 
 #[tracing::instrument]
@@ -271,10 +272,9 @@ async fn post_order(
 ) -> Result<HttpResponse, Error> {
     let order_id = sqlx::query_as!(
         OrderId,
-        "INSERT INTO orders(id, user_id, content) VALUES($1, $2, $3) RETURNING id",
+        "INSERT INTO orders(id, user_id) VALUES($1, $2) RETURNING id",
         Uuid::new_v4(),
         order_input.user_id,
-        order_input.content,
     )
     .fetch_one(&app_data.pool)
     .await
@@ -284,13 +284,12 @@ async fn post_order(
 
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
 struct OrderUpdateInput {
-    content: Option<String>,
     user_id: Option<Uuid>,
 }
 
 #[instrument(
     skip(app_data),
-    fields(content = ?order_update_input.content, user_id = ?order_update_input.user_id, id = ?id)
+    fields(user_id = ?order_update_input.user_id, id = ?id)
 )]
 async fn put_order(
     id: web::Path<Uuid>,
@@ -298,8 +297,7 @@ async fn put_order(
     order_update_input: web::Json<OrderUpdateInput>,
 ) -> Result<HttpResponse, Error> {
     sqlx::query!(
-        "UPDATE orders SET content = $1, user_id = $2 WHERE id = $3",
-        order_update_input.content,
+        "UPDATE orders SET user_id = $1 WHERE id = $2",
         order_update_input.user_id,
         id.into_inner()
     )
@@ -321,11 +319,11 @@ async fn delete_order(
 }
 
 async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
-    let orders: Vec<Order> = sqlx::query_as!(Order, "SELECT id, user_id, content FROM orders")
+    let orders: Vec<Order> = sqlx::query_as!(Order, "SELECT id, user_id, product_id FROM orders")
         .fetch_all(&app_data.pool)
         .await
         .map_err(|err| Error::Db(err.into()))?;
-
+    tracing::info!("locally have {orders:?}");
     let Some(cookie) = req.cookie("access_token") else {
         return Err(Error::Auth(
             "was about to send grpc request but didn't found a token; aborting".into(),
@@ -345,18 +343,34 @@ async fn get_orders(req: HttpRequest, app_data: web::Data<AppData>) -> Result<Ht
     };
     tracing::info!("succesfuly send message via sync channel");
     let request = tonic::Request::new(GetStockRequest {
-        product_ids: orders.iter().map(|order| order.id.into()).collect(),
+        product_ids: orders.iter().map(|order| order.product_id.into()).collect(),
     });
-    let response = app_data
+    let invetory = app_data
         .inventory_service_client
         .lock()
         .expect("failed to acquire mutex on inventory service client")
         .get_stock(request)
         .await
-        .map_err(|err| Error::Grpc(err.into()))?;
-    println!("RESPONSE={:?}", response);
-
-    Ok(HttpResponse::Ok().json(orders))
+        .map_err(|err| Error::Grpc(err.into()))?
+        .into_inner();
+    tracing::info!("fettched {invetory:?}");
+    let mut merged: Vec<common::Order> = Vec::new();
+    for (order, stock) in orders.into_iter().zip(invetory.stocks.into_iter()) {
+        assert_eq!(
+            order.product_id.to_string(),
+            stock.product_id,
+            "make sure gateway and invetory return items in the same order"
+        );
+        // TODO: builder pattern? `from_order().from_stcok().build()`
+        merged.push(common::Order {
+            product_id: order.product_id,
+            id: order.id,
+            available_quantity: stock.available_quantity,
+            user_id: order.user_id,
+        });
+    }
+    tracing::info!("will respond with {merged:?}");
+    Ok(HttpResponse::Ok().json(merged))
 }
 
 type GenericError = Box<dyn std::error::Error + Send + Sync>;

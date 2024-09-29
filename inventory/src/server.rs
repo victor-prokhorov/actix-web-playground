@@ -22,22 +22,31 @@ pub struct InventoryServer {
 impl InventoryService for InventoryServer {
     async fn update_stock(
         &self,
-        req: Request<UpdateStockRequest>,
+        _req: Request<UpdateStockRequest>,
     ) -> Result<Response<UpdateStockResponse>, Status> {
-        dbg!(req);
-        Err(Status::internal("nope :("))
+        todo!()
     }
     async fn get_stock(
         &self,
         req: Request<GetStockRequest>,
     ) -> Result<Response<GetStockResponse>, Status> {
-        dbg!(req);
-        Ok(Response::new(GetStockResponse {
-            stocks: vec![ProductStock {
-                product_id: Uuid::new_v4().into(),
-                available_quantity: 666,
-            }],
-        }))
+        let ids: Vec<Uuid> = req
+            .into_inner()
+            .product_ids
+            .into_iter()
+            .map(|id| Uuid::parse_str(&id).expect("internal service did not provided valid uuid"))
+            .collect();
+        tracing::info!("received {ids:?}");
+        let stocks = sqlx::query_as!(
+            ProductStock,
+            "SELECT * FROM product_stock WHERE product_id = ANY($1)",
+            &ids
+        )
+        .fetch_all(&self.pool)
+        .await
+        .expect("failed to fetch all stocks");
+        tracing::info!("found {stocks:?}");
+        Ok(Response::new(GetStockResponse { stocks }))
     }
 }
 

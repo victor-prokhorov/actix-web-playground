@@ -38,11 +38,12 @@ pub fn load_rustls_config() -> rustls::ServerConfig {
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
 pub struct Order {
     #[typeshare(serialized_as = "String")]
-    id: Uuid,
+    pub id: Uuid,
     /// we loose `Option` by marking manually though
     #[typeshare(serialized_as = "String")]
-    user_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
     #[typeshare(serialized_as = "String")]
-    product_id: Uuid,
-    available_quantity: i32, // as of today `typeshare-cli` fail on `usize` so `i32` it will be
+    pub product_id: Uuid,
+    /// this one come from invetory
+    pub available_quantity: i32, // as of today `typeshare-cli` fail on `usize` so `i32` it will be
 }

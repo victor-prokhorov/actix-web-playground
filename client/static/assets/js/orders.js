@@ -11,7 +11,7 @@ const BASE_URL = "https://127.0.0.1:3001/orders/";
 function processOrders(orders) {
     for (const order of orders) {
         console.log("processing...");
-        console.log({ order });
+        console.log(order);
     }
 }
 
