@@ -1,0 +1,11 @@
+[package]
+name = "restock"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+futures = "0.3.21"
+lapin = "2.1.1"
+tokio = { version = "1.20.4", features = ["full"] }
+uuid = { version = "1.1.1", features = ["v4"] }
+tokio-stream = "0.1"

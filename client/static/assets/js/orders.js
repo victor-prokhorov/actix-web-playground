@@ -45,6 +45,7 @@ async function postOrder(orderData) {
                 content: orderData.content,
                 id: orderData.id || null,
                 user_id: orderData.id || null,
+                product_id: orderData.productId || null,
             })
         });
         const result = await resp.json();

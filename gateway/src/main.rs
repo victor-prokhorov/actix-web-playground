@@ -10,8 +10,8 @@ use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
-use common::inventory::inventory_service_client::InventoryServiceClient;
 use common::inventory::GetStockRequest;
+use common::inventory::{inventory_service_client::InventoryServiceClient, UpdateStockRequest};
 use core::fmt;
 use futures_util::StreamExt;
 use jsonwebtoken::{
@@ -256,6 +256,7 @@ struct OrderId {
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
 struct OrderInput {
     user_id: Option<Uuid>,
+    product_id: Uuid,
 }
 
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]
@@ -267,19 +268,56 @@ struct Order {
 
 #[tracing::instrument]
 async fn post_order(
+    req: HttpRequest,
     app_data: web::Data<AppData>,
     order_input: web::Json<OrderInput>,
 ) -> Result<HttpResponse, Error> {
     let order_id = sqlx::query_as!(
         OrderId,
-        "INSERT INTO orders(id, user_id) VALUES($1, $2) RETURNING id",
+        "INSERT INTO orders(id, user_id, product_id) VALUES($1, $2, $3) RETURNING id",
         Uuid::new_v4(),
         order_input.user_id,
+        order_input.product_id,
     )
     .fetch_one(&app_data.pool)
     .await
     .map_err(|err| Error::Db(err.into()))?;
-    Ok(HttpResponse::Ok().json(order_id))
+
+    let Some(cookie) = req.cookie("access_token") else {
+        return Err(Error::Auth(
+            "was about to send grpc request but didn't found a token; aborting".into(),
+        ));
+    };
+    let token: MetadataValue<Ascii> = cookie
+        .value()
+        .parse()
+        .map_err(|_| Error::Grpc("failed to parse token into metadata".into()))?;
+    let Ok(_) = app_data.token_tx.send(
+        token
+            .to_str()
+            .map_err(|_| Error::Grpc("converting token to a string failed".into()))?
+            .to_string(),
+    ) else {
+        return Err(Error::Grpc("failed to send new token to update".into()));
+    };
+    tracing::info!("succesfuly send message via sync channel");
+    let request = tonic::Request::new(UpdateStockRequest {
+        order_id: order_id.id.to_string(),
+        product_id: order_input.product_id.to_string(),
+    });
+    let update_stock_response = app_data
+        .inventory_service_client
+        .lock()
+        .expect("failed to acquire mutex on inventory service client")
+        .update_stock(request)
+        .await
+        .map_err(|err| Error::Grpc(err.into()))?
+        .into_inner();
+    if update_stock_response.success {
+        Ok(HttpResponse::Ok().json(order_id))
+    } else {
+        Ok(HttpResponse::Ok().json(r#""unlucky for you, no items left""#))
+    }
 }
 
 #[derive(FromRow, Deserialize, Serialize, Debug, Clone)]

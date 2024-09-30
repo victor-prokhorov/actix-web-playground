@@ -2,8 +2,7 @@ use common::inventory::inventory_service_server::{
     InventoryService, InventoryServiceServer, SERVICE_NAME,
 };
 use common::inventory::{
-    GetStockRequest, GetStockResponse, Product, ProductStock, UpdateStockRequest,
-    UpdateStockResponse,
+    GetStockRequest, GetStockResponse, ProductStock, UpdateStockRequest, UpdateStockResponse,
 };
 use dotenv::dotenv;
 use jsonwebtoken::{decode, DecodingKey, Validation};
@@ -22,9 +21,25 @@ pub struct InventoryServer {
 impl InventoryService for InventoryServer {
     async fn update_stock(
         &self,
-        _req: Request<UpdateStockRequest>,
+        req: Request<UpdateStockRequest>,
     ) -> Result<Response<UpdateStockResponse>, Status> {
-        todo!()
+        let update_stock_request = req.into_inner();
+        let quantity_remaining = sqlx::query_scalar!(
+            "UPDATE product_stock
+            SET available_quantity = available_quantity - 1
+            WHERE product_id = $1
+            RETURNING available_quantity",
+            Uuid::parse_str(&update_stock_request.product_id).unwrap(),
+        )
+        .fetch_one(&self.pool)
+        .await
+        .expect("failed to fetch all stocks");
+        let why_not_ten = 10;
+        if quantity_remaining > why_not_ten {
+            Ok(Response::new(UpdateStockResponse { success: true }))
+        } else {
+            Ok(Response::new(UpdateStockResponse { success: false }))
+        }
     }
     async fn get_stock(
         &self,
@@ -39,7 +54,7 @@ impl InventoryService for InventoryServer {
         tracing::info!("received {ids:?}");
         let stocks = sqlx::query_as!(
             ProductStock,
-            "SELECT * FROM product_stock WHERE product_id = ANY($1)",
+            "SELECT available_quantity, product_id FROM product_stock WHERE product_id = ANY($1)",
             &ids
         )
         .fetch_all(&self.pool)

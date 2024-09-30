@@ -36,3 +36,5 @@ grpcurl -plaintext \
 ```
 - cloning the `Channel` type is cheap and encouraged
 - [interceptor example build, how to reuse client](https://github.com/hyperium/tonic/blob/master/examples/src/interceptor/client.rs)
+- [rabbitmq tutorial (javascript)](https://www.rabbitmq.com/tutorials/tutorial-one-javascript)
+- [lapin translation](https://github.com/rabbitmq/rabbitmq-tutorials/tree/main/rust-lapin)
