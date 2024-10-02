@@ -3,6 +3,7 @@ use common::inventory::inventory_service_server::{
 };
 use common::inventory::{
     GetStockRequest, GetStockResponse, ProductStock, UpdateStockRequest, UpdateStockResponse,
+    UpdateStockResponseV2,
 };
 use dotenv::dotenv;
 use jsonwebtoken::{decode, DecodingKey, Validation};
@@ -19,6 +20,34 @@ pub struct InventoryServer {
 
 #[tonic::async_trait]
 impl InventoryService for InventoryServer {
+    async fn update_stock_v2(
+        &self,
+        req: Request<UpdateStockRequest>,
+    ) -> Result<Response<UpdateStockResponseV2>, Status> {
+        let update_stock_request = req.into_inner();
+        let remaining_quantity = sqlx::query_scalar!(
+            "UPDATE product_stock
+            SET available_quantity = available_quantity - 1
+            WHERE product_id = $1
+            RETURNING available_quantity",
+            Uuid::parse_str(&update_stock_request.product_id).unwrap(),
+        )
+        .fetch_one(&self.pool)
+        .await
+        .expect("failed to fetch all stocks");
+        let why_not_ten = 10;
+        if remaining_quantity > why_not_ten {
+            Ok(Response::new(UpdateStockResponseV2 {
+                success: true,
+                remaining_quantity,
+            }))
+        } else {
+            Ok(Response::new(UpdateStockResponseV2 {
+                success: false,
+                remaining_quantity,
+            }))
+        }
+    }
     async fn update_stock(
         &self,
         req: Request<UpdateStockRequest>,
