@@ -38,3 +38,4 @@ grpcurl -plaintext \
 - [interceptor example build, how to reuse client](https://github.com/hyperium/tonic/blob/master/examples/src/interceptor/client.rs)
 - [rabbitmq tutorial (javascript)](https://www.rabbitmq.com/tutorials/tutorial-one-javascript)
 - [lapin translation](https://github.com/rabbitmq/rabbitmq-tutorials/tree/main/rust-lapin)
+- [grpc schema evolution article](https://softwaremill.com/schema-evolution-protobuf-scalapb-fs2grpc/)

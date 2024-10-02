@@ -19,6 +19,13 @@ pub struct UpdateStockResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct UpdateStockResponseV2 {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(int32, tag = "2")]
+    pub remaining_quantity: i32,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetStockRequest {
     #[prost(string, repeated, tag = "1")]
@@ -144,6 +151,30 @@ pub mod inventory_service_client {
                 .insert(GrpcMethod::new("inventory.InventoryService", "UpdateStock"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn update_stock_v2(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateStockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateStockResponseV2>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/inventory.InventoryService/UpdateStockV2",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("inventory.InventoryService", "UpdateStockV2"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn get_stock(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStockRequest>,
@@ -188,6 +219,13 @@ pub mod inventory_service_server {
             request: tonic::Request<super::UpdateStockRequest>,
         ) -> std::result::Result<
             tonic::Response<super::UpdateStockResponse>,
+            tonic::Status,
+        >;
+        async fn update_stock_v2(
+            &self,
+            request: tonic::Request<super::UpdateStockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateStockResponseV2>,
             tonic::Status,
         >;
         async fn get_stock(
@@ -304,6 +342,52 @@ pub mod inventory_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = UpdateStockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/inventory.InventoryService/UpdateStockV2" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateStockV2Svc<T: InventoryService>(pub Arc<T>);
+                    impl<
+                        T: InventoryService,
+                    > tonic::server::UnaryService<super::UpdateStockRequest>
+                    for UpdateStockV2Svc<T> {
+                        type Response = super::UpdateStockResponseV2;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateStockRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as InventoryService>::update_stock_v2(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateStockV2Svc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
