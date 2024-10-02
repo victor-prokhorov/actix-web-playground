@@ -1,7 +1,6 @@
 syntax = "proto3";
 package inventory;
 service InventoryService {
-  rpc UpdateStock(UpdateStockRequest) returns (UpdateStockResponse);
   rpc UpdateStockV2(UpdateStockRequest) returns (UpdateStockResponseV2);
   rpc GetStock(GetStockRequest) returns (GetStockResponse);
 }
@@ -12,9 +11,6 @@ message ProductStock {
 message UpdateStockRequest {
   string order_id = 1;
   string product_id = 2;
-}
-message UpdateStockResponse {
-  bool success = 1;
 }
 message UpdateStockResponseV2 {
   bool success = 1;
