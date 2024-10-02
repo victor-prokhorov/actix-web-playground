@@ -539,7 +539,6 @@ async fn main() -> std::io::Result<()> {
     let channel = Channel::from_static("http://[::1]:50051")
         .connect()
         .await
-        .map_err(|e| Error::Grpc(e.into()))
         .expect("failed to establish connection to gRPC server");
     let (tx, rx) = mpsc::channel();
     let inventory_service_client =

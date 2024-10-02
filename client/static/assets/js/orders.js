@@ -45,7 +45,7 @@ async function postOrder(orderData) {
                 content: orderData.content,
                 id: orderData.id || null,
                 user_id: orderData.id || null,
-                product_id: orderData.productId || null,
+                product_id: orderData.product_id || null,
             })
         });
         const result = await resp.json();
@@ -97,7 +97,8 @@ document.getElementById('postOrderForm').addEventListener('submit', function (e)
     const orderData = {
         id: document.getElementById('newOrderId').value || null,
         user_id: document.getElementById('newUserId').value || null,
-        content: document.getElementById('newContent').value || null
+        content: document.getElementById('newContent').value || null,
+        product_id: document.getElementById('productId').value || null,
     };
     postOrder(orderData);
 });
