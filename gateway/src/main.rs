@@ -17,6 +17,7 @@ use futures_util::StreamExt;
 use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
+use restock_client::FibonacciRpcClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{postgres::PgListener, FromRow, PgPool};
@@ -37,9 +38,7 @@ use tonic::{
 use tracing::instrument;
 use uuid::Uuid;
 
-pub mod hello_world {
-    tonic::include_proto!("helloworld");
-}
+mod restock_client;
 
 #[derive(Deserialize, Debug)]
 struct UserInput {
@@ -68,6 +67,8 @@ struct AppData {
     inventory_service_client:
         Mutex<InventoryServiceClient<InterceptedService<Channel, GrpcAuthInterceptor>>>,
     token_tx: Sender<String>,
+    // `call` take `&mut` -> Mutex
+    restock_client: Mutex<FibonacciRpcClient>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 15;
@@ -523,6 +524,17 @@ impl Interceptor for GrpcAuthInterceptor {
     }
 }
 
+async fn restock(app_data: web::Data<AppData>) -> Result<HttpResponse, actix_web::Error> {
+    tracing::info!("restocking request received");
+    let resp = app_data
+        .restock_client
+        .lock()
+        .expect("mutex yikes")
+        .call(30)
+        .await?;
+    Ok(HttpResponse::Ok().json(resp))
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -547,14 +559,20 @@ async fn main() -> std::io::Result<()> {
     let (tx, rx) = mpsc::channel();
     let inventory_service_client =
         InventoryServiceClient::with_interceptor(channel, GrpcAuthInterceptor { token_rx: rx });
+    let restock_client = Mutex::new(
+        FibonacciRpcClient::new()
+            .await
+            .expect("failed to init rcp client"),
+    );
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
         refresh_token_secret,
         inventory_service_client: Mutex::new(inventory_service_client),
         token_tx: tx,
+        restock_client,
     });
-    HttpServer::new(move || {
+    let factory_result = HttpServer::new(move || {
         App::new()
             .app_data(app_data.clone())
             .wrap(
@@ -570,6 +588,7 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/orders")
                     .wrap(from_fn(auth_middleware))
+                    .route("/restock", web::get().to(restock))
                     .route("/", web::get().to(get_orders))
                     .route("/", web::post().to(post_order))
                     .route("/{id}", web::get().to(get_order))
@@ -585,9 +604,11 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
     })
     .workers(1)
-    .bind_rustls_0_23(("127.0.0.1", 3001), config)?
+    .bind_rustls_0_23(("127.0.0.1", 3001), config)
+    .expect("attempted to bind socket addr for TSL connection")
     .run()
-    .await
+    .await;
+    factory_result
 }
 
 async fn orders_ws(

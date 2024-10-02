@@ -1,127 +1,104 @@
-// Inventory Service
+use futures::StreamExt;
+use lapin::{options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties};
+use std::convert::TryInto;
+use std::fmt::Display;
 
-use lapin::{options::*, types::FieldTable, Channel, Connection, ConnectionProperties};
-use sqlx::PgPool;
-
-struct InventoryService {
-    channel: Channel,
-    db_pool: PgPool,
+#[derive(Debug)]
+enum Error {
+    CannotDecodeArg,
+    MissingReplyTo,
+    MissingCorrelationId,
 }
 
-impl InventoryService {
-    async fn new(amqp_addr: &str, db_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let conn = Connection::connect(amqp_addr, ConnectionProperties::default()).await?;
-        let channel = conn.create_channel().await?;
-        let db_pool = PgPool::connect(db_url).await?;
+impl std::error::Error for Error {}
 
-        Ok(Self { channel, db_pool })
-    }
-
-    async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.channel
-            .queue_declare(
-                "restock_complete",
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-
-        let mut consumer = self
-            .channel
-            .basic_consume(
-                "restock_complete",
-                "inventory_consumer",
-                BasicConsumeOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-
-        while let Some(delivery) = consumer.next().await {
-            if let Ok(delivery) = delivery {
-                let item_id = String::from_utf8_lossy(&delivery.data);
-                self.update_stock(&item_id).await?;
-                self.channel
-                    .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
-                    .await?;
-            }
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Error::CannotDecodeArg => write!(f, "Cannot decode argument"),
+            Error::MissingReplyTo => write!(f, "Missing 'reply to' property"),
+            Error::MissingCorrelationId => write!(f, "Missing 'correlation id' property"),
         }
-
-        Ok(())
     }
+}
 
-    async fn update_stock(&self, item_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "UPDATE inventory SET stock = stock + 100 WHERE id = $1",
-            item_id
+fn fib(n: u64) -> u64 {
+    if n < 2 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let addr = "amqp://127.0.0.1:5672";
+    let conn = Connection::connect(addr, ConnectionProperties::default()).await?;
+    let channel = conn.create_channel().await?;
+
+    channel
+        .queue_declare(
+            "rpc_queue",
+            QueueDeclareOptions::default(),
+            FieldTable::default(),
         )
-        .execute(&self.db_pool)
         .await?;
-        Ok(())
-    }
-}
 
-// Restock Service
+    channel.basic_qos(1, BasicQosOptions::default()).await?;
 
-use lapin::{options::*, types::FieldTable, Channel, Connection, ConnectionProperties};
+    let mut consumer = channel
+        .basic_consume(
+            "rpc_queue",
+            "rpc_server",
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        )
+        .await?;
 
-struct RestockService {
-    channel: Channel,
-}
+    println!(" [x] Awaiting RPC requests");
 
-impl RestockService {
-    async fn new(amqp_addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let conn = Connection::connect(amqp_addr, ConnectionProperties::default()).await?;
-        let channel = conn.create_channel().await?;
-        Ok(Self { channel })
-    }
+    while let Some(delivery) = consumer.next().await {
+        if let Ok(delivery) = delivery {
+            println!(" [x] Received {:?}", std::str::from_utf8(&delivery.data)?);
+            let n = u64::from_le_bytes(
+                delivery
+                    .data
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::CannotDecodeArg)?,
+            );
+            println!(" [.] fib({})", n);
+            let response = fib(n);
+            let payload = response.to_be_bytes();
 
-    async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.channel
-            .queue_declare(
-                "restock_request",
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
+            let routing_key = delivery
+                .properties
+                .reply_to()
+                .as_ref()
+                .ok_or(Error::MissingReplyTo)?
+                .as_str();
 
-        let mut consumer = self
-            .channel
-            .basic_consume(
-                "restock_request",
-                "restock_consumer",
-                BasicConsumeOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
+            let correlation_id = delivery
+                .properties
+                .correlation_id()
+                .clone()
+                .ok_or(Error::MissingCorrelationId)?;
 
-        while let Some(delivery) = consumer.next().await {
-            if let Ok(delivery) = delivery {
-                let item_id = String::from_utf8_lossy(&delivery.data);
-                self.process_restock(&item_id).await?;
-                self.channel
-                    .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
-                    .await?;
-            }
+            channel
+                .basic_publish(
+                    "",
+                    routing_key,
+                    BasicPublishOptions::default(),
+                    &payload,
+                    BasicProperties::default().with_correlation_id(correlation_id),
+                )
+                .await?;
+
+            channel
+                .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
+                .await?;
         }
-
-        Ok(())
     }
 
-    async fn process_restock(&self, item_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // Simulate long-living task
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-        // Send completion message back to inventory service
-        self.channel
-            .basic_publish(
-                "",
-                "restock_complete",
-                BasicPublishOptions::default(),
-                item_id.as_bytes(),
-                BasicProperties::default(),
-            )
-            .await?;
-
-        Ok(())
-    }
+    Ok(())
 }

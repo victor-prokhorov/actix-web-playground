@@ -65,5 +65,10 @@
 
         <button type="submit">Delete Order</button>
     </form>
+
+    <hr />
+    <button onclick="fetch('https://127.0.0.1:3001/orders/restock', { credentials: 'include' }).then(response => response.json()).then(restock_response => console.log({ restock_response })).catch(error => console.error('unlucky:', error));">
+        Restock
+    </button>
 </body>
 </html>

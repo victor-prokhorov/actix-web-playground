@@ -39,3 +39,14 @@ grpcurl -plaintext \
 - [rabbitmq tutorial (javascript)](https://www.rabbitmq.com/tutorials/tutorial-one-javascript)
 - [lapin translation](https://github.com/rabbitmq/rabbitmq-tutorials/tree/main/rust-lapin)
 - [grpc schema evolution article](https://softwaremill.com/schema-evolution-protobuf-scalapb-fs2grpc/)
+- [rpc request/reply or direct reply-to](https://www.rabbitmq.com/docs/direct-reply-to)
+- [enterprise integration patterns](https://www.enterpriseintegrationpatterns.com/patterns/messaging/RequestReply.html)
+- [getting started distroless containers](https://edu.chainguard.dev/chainguard/chainguard-images/getting-started-distroless/)
+
+# things to try:
+
+- https://garagehq.deuxfleurs.fr/
+- distroless
+- PKCE
+- searchable encryption
+- multi-key encryption (never access data)
