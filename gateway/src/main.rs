@@ -18,6 +18,7 @@ use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::{postgres::PgListener, FromRow, PgPool};
 use std::{
     env,
@@ -309,12 +310,15 @@ async fn post_order(
         .inventory_service_client
         .lock()
         .expect("failed to acquire mutex on inventory service client")
-        .update_stock(request)
+        .update_stock_v2(request)
         .await
         .map_err(|err| Error::Grpc(err.into()))?
         .into_inner();
     if update_stock_response.success {
-        Ok(HttpResponse::Ok().json(order_id))
+        Ok(HttpResponse::Ok().json(json!({
+            "order_id": order_id.id,
+            "remaining_quantity": update_stock_response.remaining_quantity
+        })))
     } else {
         Ok(HttpResponse::Ok().json(r#""unlucky for you, no items left""#))
     }
