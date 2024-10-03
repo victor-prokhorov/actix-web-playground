@@ -1,7 +1,10 @@
 use futures::StreamExt;
 use lapin::{options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties};
+use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 use std::fmt::Display;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug)]
 enum Error {
@@ -22,12 +25,10 @@ impl Display for Error {
     }
 }
 
-fn fib(n: u64) -> u64 {
-    if n < 2 {
-        n
-    } else {
-        fib(n - 1) + fib(n - 2)
-    }
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct MyPayload {
+    id: u32,
+    message: String,
 }
 
 #[tokio::main]
@@ -35,20 +36,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "amqp://127.0.0.1:5672";
     let conn = Connection::connect(addr, ConnectionProperties::default()).await?;
     let channel = conn.create_channel().await?;
-
     channel
         .queue_declare(
-            "rpc_queue",
+            "restock_queue",
             QueueDeclareOptions::default(),
             FieldTable::default(),
         )
         .await?;
-
     channel.basic_qos(1, BasicQosOptions::default()).await?;
-
     let mut consumer = channel
         .basic_consume(
-            "rpc_queue",
+            "restock_queue",
             "rpc_server",
             BasicConsumeOptions::default(),
             FieldTable::default(),
@@ -59,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Some(delivery) = consumer.next().await {
         if let Ok(delivery) = delivery {
-            println!(" [x] Received {:?}", std::str::from_utf8(&delivery.data)?);
+            println!("received {:?}", std::str::from_utf8(&delivery.data)?);
             let n = u64::from_le_bytes(
                 delivery
                     .data
@@ -67,9 +65,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .try_into()
                     .map_err(|_| Error::CannotDecodeArg)?,
             );
-            println!(" [.] fib({})", n);
-            let response = fib(n);
-            let payload = response.to_be_bytes();
+            for done in 0..=10 {
+                println!("{}% done, working...", done * 10);
+                thread::sleep(Duration::from_secs(1));
+            }
+            // let response = fib(n);
+            // let payload = response.to_be_bytes();
+            let payload = MyPayload::default();
+            let serialized_payload = serde_json::to_vec(&payload)?;
 
             let routing_key = delivery
                 .properties
@@ -89,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "",
                     routing_key,
                     BasicPublishOptions::default(),
-                    &payload,
+                    &serialized_payload,
                     BasicProperties::default().with_correlation_id(correlation_id),
                 )
                 .await?;

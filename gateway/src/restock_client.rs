@@ -3,6 +3,7 @@ use lapin::{
     options::*, types::FieldTable, types::ShortString, BasicProperties, Channel, Connection,
     ConnectionProperties, Consumer, Queue,
 };
+use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -35,6 +36,12 @@ pub struct FibonacciRpcClient {
     correlation_id: ShortString,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct MyPayload {
+    id: u32,
+    message: String,
+}
+
 impl FibonacciRpcClient {
     pub async fn new() -> Result<Self, lapin::Error> {
         let addr = "amqp://127.0.0.1:5672";
@@ -54,7 +61,7 @@ impl FibonacciRpcClient {
         let consumer = channel
             .basic_consume(
                 callback_queue.name().as_str(),
-                "rpc_client",
+                "restock_client",
                 BasicConsumeOptions {
                     no_ack: true,
                     ..Default::default()
@@ -74,11 +81,11 @@ impl FibonacciRpcClient {
         })
     }
 
-    pub async fn call(&mut self, n: u64) -> Result<u64, Box<dyn std::error::Error>> {
+    pub async fn call(&mut self, n: u64) -> Result<MyPayload, Box<dyn std::error::Error>> {
         self.channel
             .basic_publish(
                 "",
-                "rpc_queue",
+                "restock_queue",
                 BasicPublishOptions::default(),
                 &*n.to_le_bytes().to_vec(),
                 BasicProperties::default()
@@ -87,17 +94,21 @@ impl FibonacciRpcClient {
             )
             .await?
             .await?;
-
+        tracing::info!("published to restock queue");
         while let Some(delivery) = self.consumer.next().await {
             if let Ok(delivery) = delivery {
                 if delivery.properties.correlation_id().as_ref() == Some(&self.correlation_id) {
-                    return Ok(u64::from_le_bytes(
-                        delivery
-                            .data
-                            .as_slice()
-                            .try_into()
-                            .map_err(|_| Error::CannotDecodeReply)?,
-                    ));
+                    // Deserialize the payload
+                    let payload: MyPayload = serde_json::from_slice(&delivery.data)
+                        .map_err(|_| "Failed to deserialize payload")?;
+                    return Ok(payload);
+                    // return Ok(u64::from_le_bytes(
+                    //     delivery
+                    //         .data
+                    //         .as_slice()
+                    //         .try_into()
+                    //         .map_err(|_| Error::CannotDecodeReply)?,
+                    // ));
                 }
             }
         }
