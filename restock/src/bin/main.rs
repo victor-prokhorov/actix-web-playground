@@ -57,7 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Some(delivery) = consumer.next().await {
         if let Ok(delivery) = delivery {
-            println!("received {:?}", std::str::from_utf8(&delivery.data)?);
             let n = u64::from_le_bytes(
                 delivery
                     .data
@@ -66,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|_| Error::CannotDecodeArg)?,
             );
             for done in 0..=10 {
-                println!("{}% done, working...", done * 10);
+                println!("{}% done, working... thread sleep btw", done * 10);
                 thread::sleep(Duration::from_secs(1));
             }
             // let response = fib(n);

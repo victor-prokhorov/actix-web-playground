@@ -47,3 +47,15 @@ pub struct Order {
     /// this one come from invetory
     pub available_quantity: i32, // as of today `typeshare-cli` fail on `usize` so `i32` it will be
 }
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct RestockRequest {
+    pub id: Uuid,
+    pub desired_amount: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct RestockResponse {
+    pub id: Uuid,
+    pub restocked_amount: i32,
+}

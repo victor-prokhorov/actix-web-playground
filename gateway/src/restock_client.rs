@@ -3,8 +3,6 @@ use lapin::{
     options::*, types::FieldTable, types::ShortString, BasicProperties, Channel, Connection,
     ConnectionProperties, Consumer, Queue,
 };
-use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
 use std::fmt::Display;
 use std::sync::Arc;
 use tokio::runtime::Handle;
@@ -28,7 +26,7 @@ impl Display for Error {
 }
 
 #[derive(Debug)]
-pub struct FibonacciRpcClient {
+pub struct RestockRpcClient {
     conn: Arc<Connection>,
     channel: Channel,
     callback_queue: Queue,
@@ -36,13 +34,7 @@ pub struct FibonacciRpcClient {
     correlation_id: ShortString,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct MyPayload {
-    id: u32,
-    message: String,
-}
-
-impl FibonacciRpcClient {
+impl RestockRpcClient {
     pub async fn new() -> Result<Self, lapin::Error> {
         let addr = "amqp://127.0.0.1:5672";
         let conn = Connection::connect(addr, ConnectionProperties::default()).await?;
@@ -81,13 +73,16 @@ impl FibonacciRpcClient {
         })
     }
 
-    pub async fn call(&mut self, n: u64) -> Result<MyPayload, Box<dyn std::error::Error>> {
+    pub async fn call(
+        &mut self,
+        req: common::RestockRequest,
+    ) -> Result<common::RestockResponse, Box<dyn std::error::Error>> {
         self.channel
             .basic_publish(
                 "",
                 "restock_queue",
                 BasicPublishOptions::default(),
-                &*n.to_le_bytes().to_vec(),
+                &serde_json::to_vec(&req)?,
                 BasicProperties::default()
                     .with_reply_to(self.callback_queue.name().clone())
                     .with_correlation_id(self.correlation_id.clone()),
@@ -98,17 +93,9 @@ impl FibonacciRpcClient {
         while let Some(delivery) = self.consumer.next().await {
             if let Ok(delivery) = delivery {
                 if delivery.properties.correlation_id().as_ref() == Some(&self.correlation_id) {
-                    // Deserialize the payload
-                    let payload: MyPayload = serde_json::from_slice(&delivery.data)
-                        .map_err(|_| "Failed to deserialize payload")?;
-                    return Ok(payload);
-                    // return Ok(u64::from_le_bytes(
-                    //     delivery
-                    //         .data
-                    //         .as_slice()
-                    //         .try_into()
-                    //         .map_err(|_| Error::CannotDecodeReply)?,
-                    // ));
+                    let resp: common::RestockResponse = serde_json::from_slice(&delivery.data)
+                        .map_err(|_| "failed to deserialize reponse")?;
+                    return Ok(resp);
                 }
             }
         }
@@ -123,7 +110,7 @@ impl FibonacciRpcClient {
     // }
 }
 
-impl Drop for FibonacciRpcClient {
+impl Drop for RestockRpcClient {
     fn drop(&mut self) {
         let conn = self.conn.clone();
         if let Ok(handle) = Handle::try_current() {

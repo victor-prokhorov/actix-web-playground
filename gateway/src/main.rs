@@ -17,7 +17,7 @@ use futures_util::StreamExt;
 use jsonwebtoken::{
     decode, encode, errors::ErrorKind, DecodingKey, EncodingKey, Header, Validation,
 };
-use restock_client::FibonacciRpcClient;
+use restock_client::RestockRpcClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{postgres::PgListener, FromRow, PgPool};
@@ -25,7 +25,7 @@ use std::{
     env,
     sync::{
         mpsc::{self, Receiver, Sender, TryRecvError},
-        Mutex,
+        Arc, Mutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -68,7 +68,7 @@ struct AppData {
         Mutex<InventoryServiceClient<InterceptedService<Channel, GrpcAuthInterceptor>>>,
     token_tx: Sender<String>,
     // `call` take `&mut` -> Mutex
-    restock_client: Mutex<FibonacciRpcClient>,
+    restock_client: Arc<Mutex<RestockRpcClient>>,
 }
 
 const ACCESS_TOKEN_EXPIRATION: usize = 60 * 15;
@@ -526,13 +526,28 @@ impl Interceptor for GrpcAuthInterceptor {
 
 async fn restock(app_data: web::Data<AppData>) -> Result<HttpResponse, actix_web::Error> {
     tracing::info!("restocking request received");
-    let resp = app_data
-        .restock_client
-        .lock()
-        .expect("mutex yikes")
-        .call(30)
-        .await?;
-    Ok(HttpResponse::Ok().json(resp))
+    let restock_client = app_data.restock_client.clone();
+    rt::spawn(async move {
+        tracing::info!("task is being processed");
+        let resp = restock_client
+            .lock()
+            .unwrap()
+            .call(common::RestockRequest {
+                id: Uuid::parse_str("06fdd1be-5d59-41c2-8bcf-70bf279e83a3").unwrap(),
+                desired_amount: 10,
+            })
+            .await;
+        match resp {
+            Err(e) => {
+                tracing::error!("errored when requesting restock {e:?}");
+            }
+            Ok(resp) => {
+                tracing::info!("ready to restock by {}", resp.restocked_amount);
+                todo!("update the stock inside invetory service")
+            }
+        }
+    });
+    Ok(HttpResponse::Ok().json(r#""restocking request sent to restock service""#))
 }
 
 #[actix_web::main]
@@ -559,11 +574,11 @@ async fn main() -> std::io::Result<()> {
     let (tx, rx) = mpsc::channel();
     let inventory_service_client =
         InventoryServiceClient::with_interceptor(channel, GrpcAuthInterceptor { token_rx: rx });
-    let restock_client = Mutex::new(
-        FibonacciRpcClient::new()
+    let restock_client = Arc::new(Mutex::new(
+        RestockRpcClient::new()
             .await
             .expect("failed to init rcp client"),
-    );
+    ));
     let app_data = web::Data::new(AppData {
         pool,
         access_token_secret,
