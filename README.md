@@ -43,10 +43,50 @@ grpcurl -plaintext \
 - [enterprise integration patterns](https://www.enterpriseintegrationpatterns.com/patterns/messaging/RequestReply.html)
 - [getting started distroless containers](https://edu.chainguard.dev/chainguard/chainguard-images/getting-started-distroless/)
 
-# things to try:
+### Garage wlaktrough documentation
 
-- https://garagehq.deuxfleurs.fr/
-- distroless
+- [building garage from source](https://garagehq.deuxfleurs.fr/documentation/cookbook/from-source/)
+- it's easier to mess around with binary cause docker image is `FROM scratch`
+- make sure to install `mold` linker! error mention `clang` only which might be missleading
+- `garage -c ./garage.toml server`
+- `garage -c ./garage.toml status` once running we still have to precise the config
+- `garage -c ./garage.toml layout assign -z dc1 -c 1G f3f676a26fe56979` we create a single node here
+- `garage -c ./garage.toml layout apply`
+- `garage -c create image-bucket`
+- `garage -c ./garage.toml key create image-app-key`
+```sh
+$ garage -c ./garage.toml key create image-app-key
+Key name: image-app-key
+Key ID: GK38cf2de91897e72101ae8e0e
+Secret key: 41f0370b900591fa908bd9d4b23fa34bae29ca60fc7d7058772a0fc8a359c493
+Can create buckets: false
+
+Key-specific bucket aliases:
+
+Authorized buckets:
+```
+```sh
+garage -c ./garage.toml bucket allow \
+  --read \
+  --write \
+  --owner \
+  image-bucket \
+  --key image-app-key
+```
+```sh
+garage -c ./garage.toml bucket info image-bucket
+```
+- `python -m pip install --user awscli`
+- `source .awsrc`
+- `aws s3 ls s3://image-bucket`
+- `aws s3 cp /proc/cpuinfo s3://image-bucket/cpuinfo.txt`
+
+# fun things to try:
+
+- https://garagehq.deuxfleurs.fr/ open cloud object storage a la S3
+- distroless images
 - PKCE
+- BFF (backed for frontned)
 - searchable encryption
 - multi-key encryption (never access data)
+

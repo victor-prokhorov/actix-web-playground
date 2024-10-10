@@ -58,11 +58,31 @@ services:
       - "15672:15672"
     restart: unless-stopped
 
+    # garage:
+    #   image: dxflrs/garage:a18b3f0d1fb932df5abce6f5e79169ca01006e3b
+    #   container_name: garage
+    #   # not sure yet which ports it really need
+    #   # network_mode: host
+    #   networks:
+    #     - garage
+    #   volumes:
+    #     # https://garagehq.deuxfleurs.fr/documentation/quick-start/ /etc/garage.toml
+    #     - ./garage.toml:/etc/garage.toml
+    #   ports:
+    #     - "3900:3900"  # S3 API
+    #     - "3901:3901"  # RPC
+    #     - "3902:3902"  # S3 Web
+    #     - "3903:3903"  # Admin API
+    #     - "3904:3904"  # K2V API
+    #     # command: ["garage", "status"] # nope nope it's from scratch
+
 networks:
   gatewaydb:
     driver: bridge
   infosdb:
     driver: bridge
+    # garage:
+    #   driver: bridge
 
 volumes:
   gatewaydb:
