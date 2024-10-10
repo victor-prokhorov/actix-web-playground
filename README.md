@@ -81,6 +81,41 @@ garage -c ./garage.toml bucket info image-bucket
 - `aws s3 ls s3://image-bucket`
 - `aws s3 cp /proc/cpuinfo s3://image-bucket/cpuinfo.txt`
 
+### Single node minio client
+
+```sh
+sudo groupadd -r minio-user
+sudo useradd -M -r -g minio-user minio-user
+sudo mkdir -p /mnt/data
+sudo chown minio-user:minio-user /mnt/data
+
+touch /etc/default/minio
+```
+```sh
+# MINIO_ROOT_USER and MINIO_ROOT_PASSWORD sets the root account for the MinIO server.
+# This user has unrestricted permissions to perform S3 and administrative API operations on any resource in the deployment.
+# Omit to use the default values 'minioadmin:minioadmin'.
+# MinIO recommends setting non-default values as a best practice, regardless of environment
+
+MINIO_ROOT_USER=myminioadmin
+MINIO_ROOT_PASSWORD=minio-secret-key-change-me
+
+# MINIO_VOLUMES sets the storage volume or path to use for the MinIO server.
+
+MINIO_VOLUMES="/mnt/data"
+
+# MINIO_OPTS sets any additional commandline options to pass to the MinIO server.
+# For example, `--console-address :9001` sets the MinIO Console listen port
+MINIO_OPTS="--console-address :9001"
+```
+- `sudo systemctl start minio.service` finally start the service
+- confirm that it worked
+```sh
+sudo systemctl status minio.service
+journalctl -f -u minio.service
+```
+- http://localhost:9001
+
 # fun things to try:
 
 - https://garagehq.deuxfleurs.fr/ open cloud object storage a la S3
