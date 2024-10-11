@@ -13,13 +13,12 @@
 
 use anyhow::Error;
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::{
-    config::{Credentials, Region},
-    meta::PKG_VERSION,
-    Client,
-};
+use aws_sdk_s3::{config::Region, meta::PKG_VERSION, Client};
 use clap::Parser;
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
+use std::{fs::File, path::Path};
+use tracing::trace;
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -58,6 +57,28 @@ async fn ensure_bucket_exists(client: &aws_sdk_s3::Client, bucket: &str) -> Resu
     Ok(())
 }
 
+/// https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_s3_code_examples.html
+async fn get_object(client: Client, bucket: &str, key: &str) -> Result<usize, anyhow::Error> {
+    // trace!("bucket:      {}", opt.bucket);
+    // trace!("object:      {}", opt.key);
+    // trace!("destination: {}", opt.destination.display());
+    trace!("destination: {}", "i'll just write it here");
+
+    let mut file = File::create("./dl-this-test.txt")?;
+
+    let mut object = client.get_object().bucket(bucket).key(key).send().await?;
+
+    let mut byte_count = 0_usize;
+    while let Some(bytes) = object.body.try_next().await? {
+        let bytes_len = bytes.len();
+        file.write_all(&bytes)?;
+        trace!("Intermediate write of {bytes_len}");
+        byte_count += bytes_len;
+    }
+
+    Ok(byte_count)
+}
+
 // snippet-start:[s3.rust.s3-helloworld]
 /// S3 Hello World Example using the AWS SDK for Rust.
 ///
@@ -87,7 +108,7 @@ async fn list_bucket_and_upload_object(
         .into_paginator()
         .send();
     let r = client.list_objects().bucket(bucket).send().await;
-    dbg!(r);
+    dbg!(r?);
 
     println!("key\tetag\tlast_modified\tstorage_class");
     while let Some(Ok(object)) = objects.next().await {
@@ -202,5 +223,7 @@ async fn main() -> Result<(), Error> {
     //     .await;
     // let client = Client::new(&shared_config);
 
-    list_bucket_and_upload_object(&s3_client, &bucket, &filename, &key).await
+    let _ = list_bucket_and_upload_object(&s3_client, &bucket, &filename, &key).await?;
+    let _ = get_object(s3_client, &bucket, &key).await?;
+    Ok(())
 }

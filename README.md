@@ -138,6 +138,12 @@ $ mc ls garage/image-bucket
 cargo add aws-config aws-sdk-dynamodb tokio --features tokio/full
 ```
 - [example of garage usage with aws client](https://gitlab.com/turbomarktplatz/turbobilder/-/blob/main/src/main.rs?ref_type=heads)
+- `cargo watch -q -w src -x 'r -- --verbose --bucket image-bucket --filename ./solid-grey.jpg --key solid-grey.jpg'`
+```sh
+$ sha256sum dl-this-test.txt solid-grey.jpg
+ad44b97ba0ba348070341a02c2d8f720f92592f146df9dc0a873c8848e66ca66  dl-this-test.txt
+ad44b97ba0ba348070341a02c2d8f720f92592f146df9dc0a873c8848e66ca66  solid-grey.jpg
+```
 
 # fun things to try:
 
