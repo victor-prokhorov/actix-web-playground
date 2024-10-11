@@ -52,13 +52,13 @@ grpcurl -plaintext \
 - `garage -c ./garage.toml status` once running we still have to precise the config
 - `garage -c ./garage.toml layout assign -z dc1 -c 1G f3f676a26fe56979` we create a single node here
 - `garage -c ./garage.toml layout apply`
-- `garage -c create image-bucket`
+- `garage -c ./garage.toml bucket create image-bucket`
 - `garage -c ./garage.toml key create image-app-key`
 ```sh
 $ garage -c ./garage.toml key create image-app-key
 Key name: image-app-key
-Key ID: GK38cf2de91897e72101ae8e0e
-Secret key: 41f0370b900591fa908bd9d4b23fa34bae29ca60fc7d7058772a0fc8a359c493
+Key ID: GK098e34fb7f80e87921fc9b72
+Secret key: dd173761470b179f7354f513af0e699f460bb3d2e13647fe9fbe92e3b1ab8e99
 Can create buckets: false
 
 Key-specific bucket aliases:
@@ -115,6 +115,29 @@ sudo systemctl status minio.service
 journalctl -f -u minio.service
 ```
 - http://localhost:9001
+
+### plug them togetehr
+
+```sh
+wget https://dl.min.io/client/mc/release/linux-amd64/mc
+chmod +x mc
+sudo mv mc /usr/local/bin/
+```
+- `mc alias set garage http://localhost:3900 GK098e34fb7f80e87921fc9b72 dd173761470b179f7354f513af0e699f460bb3d2e13647fe9fbe92e3b1ab8e99 --api S3v4`
+```sh
+$ mc ls garage
+[2024-10-10 17:39:45 CEST]     0B image-bucket/
+$ mc ls garage/image-bucket
+[2024-10-10 20:00:14 CEST]     0B STANDARD cpuinfo.txt
+```
+
+### image service
+- [aws sdk examples](https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_s3_code_examples.html)
+- aws setup
+```sh
+cargo add aws-config aws-sdk-dynamodb tokio --features tokio/full
+```
+- [example of garage usage with aws client](https://gitlab.com/turbomarktplatz/turbobilder/-/blob/main/src/main.rs?ref_type=heads)
 
 # fun things to try:
 
