@@ -5,12 +5,6 @@
 //
 // Key ID: GK098e34fb7f80e87921fc9b72
 // Secret key: dd173761470b179f7354f513af0e699f460bb3d2e13647fe9fbe92e3b1ab8e99
-
-// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-// SPDX-License-Identifier: Apache-2.0
-
-#![allow(clippy::result_large_err)]
-
 use anyhow::Error;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{config::Region, meta::PKG_VERSION, Client};
@@ -43,31 +37,10 @@ struct Opt {
     verbose: bool,
 }
 
-// Example for creating a bucket before uploading
-async fn ensure_bucket_exists(client: &aws_sdk_s3::Client, bucket: &str) -> Result<(), Error> {
-    match client.head_bucket().bucket(bucket).send().await {
-        Ok(_) => {
-            println!("Bucket '{}' exists", bucket);
-        }
-        Err(_) => {
-            println!("Bucket '{}' does not exist, creating it", bucket);
-            client.create_bucket().bucket(bucket).send().await?;
-        }
-    }
-    Ok(())
-}
-
 /// https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_s3_code_examples.html
 async fn get_object(client: Client, bucket: &str, key: &str) -> Result<usize, anyhow::Error> {
-    // trace!("bucket:      {}", opt.bucket);
-    // trace!("object:      {}", opt.key);
-    // trace!("destination: {}", opt.destination.display());
-    trace!("destination: {}", "i'll just write it here");
-
     let mut file = File::create("./dl-this-test.txt")?;
-
     let mut object = client.get_object().bucket(bucket).key(key).send().await?;
-
     let mut byte_count = 0_usize;
     while let Some(bytes) = object.body.try_next().await? {
         let bytes_len = bytes.len();
@@ -75,20 +48,10 @@ async fn get_object(client: Client, bucket: &str, key: &str) -> Result<usize, an
         trace!("Intermediate write of {bytes_len}");
         byte_count += bytes_len;
     }
-
     Ok(byte_count)
 }
 
-// snippet-start:[s3.rust.s3-helloworld]
-/// S3 Hello World Example using the AWS SDK for Rust.
-///
-/// This example lists the objects in a bucket, uploads an object to that bucket,
-/// and then retrieves the object and prints some S3 information about the object.
-/// This shows a number of S3 features, including how to use built-in paginators
-/// for large data sets.
-///
 /// # Arguments
-///
 /// * `client` - an S3 client configured appropriately for the environment.
 /// * `bucket` - the bucket name that the object will be uploaded to. Must be present in the region the `client` is configured to use.
 /// * `filename` - a reference to a path that will be read and uploaded to S3.
@@ -99,17 +62,12 @@ async fn list_bucket_and_upload_object(
     filepath: &Path,
     key: &str,
 ) -> Result<(), Error> {
-    ensure_bucket_exists(&client, &bucket).await?;
-
-    // List the buckets in this account
     let mut objects = client
         .list_objects_v2()
         .bucket(bucket)
         .into_paginator()
         .send();
-    let r = client.list_objects().bucket(bucket).send().await;
-    dbg!(r?);
-
+    // let r = client.list_objects().bucket(bucket).send().await;
     println!("key\tetag\tlast_modified\tstorage_class");
     while let Some(Ok(object)) = objects.next().await {
         for item in object.contents() {
@@ -126,10 +84,7 @@ async fn list_bucket_and_upload_object(
             );
         }
     }
-
-    // Prepare a ByteStream around the file, and upload the object using that ByteStream.
     let body = aws_sdk_s3::primitives::ByteStream::from_path(filepath).await?;
-
     let resp = client
         .put_object()
         .bucket(bucket)
@@ -143,15 +98,11 @@ async fn list_bucket_and_upload_object(
         resp.version_id()
             .expect("S3 Object upload missing version ID")
     );
-
-    // Retrieve the just-uploaded object.
     let resp = client.get_object().bucket(bucket).key(key).send().await?;
     println!("etag: {}", resp.e_tag().unwrap_or("(missing)"));
     println!("version: {}", resp.version_id().unwrap_or("(missing)"));
-
     Ok(())
 }
-// snippet-end:[s3.rust.s3-helloworld]
 
 /// Lists your buckets and uploads a file to a bucket.
 /// # Arguments
@@ -164,11 +115,9 @@ async fn list_bucket_and_upload_object(
 /// * `[-v]` - Whether to display additional information.
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // tracing_subscriber::fmt::init();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
-
     let Opt {
         bucket,
         filename,
@@ -181,11 +130,9 @@ async fn main() -> Result<(), Error> {
     if !filename.exists() {
         eprintln!("Cannot find {} for upload!", filename.display());
     }
-
     let region_provider = RegionProviderChain::first_try(region.map(Region::new))
         .or_default_provider()
         .or_else(Region::new("garage"));
-
     if verbose {
         println!("S3 client version: {}", PKG_VERSION);
         println!(
@@ -197,15 +144,6 @@ async fn main() -> Result<(), Error> {
         println!("Key:               {}", &key);
         println!();
     }
-
-    // let credentials = Credentials::new(
-    //     "GK098e34fb7f80e87921fc9b72", // Key ID
-    //     "dd173761470b179f7354f513af0e699f460bb3d2e13647fe9fbe92e3b1ab8e99", // Secret key
-    //     None,                         // No session token
-    //     None,                         // No expiration
-    //     "custom-source",              // Source description (optional)
-    // );
-
     let shared_config = aws_config::from_env()
         .endpoint_url("http://localhost:3900")
         .load()
@@ -214,16 +152,7 @@ async fn main() -> Result<(), Error> {
         .force_path_style(true)
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(shared_config);
-
-    // let shared_config = aws_config::from_env()
-    //     .region(region_provider)
-    //     .credentials_provider(credentials)
-    //     .endpoint_url("http://localhost:3900")
-    //     .load()
-    //     .await;
-    // let client = Client::new(&shared_config);
-
-    let _ = list_bucket_and_upload_object(&s3_client, &bucket, &filename, &key).await?;
-    let _ = get_object(s3_client, &bucket, &key).await?;
+    list_bucket_and_upload_object(&s3_client, &bucket, &filename, &key).await?;
+    get_object(s3_client, &bucket, &key).await?;
     Ok(())
 }
