@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package image_service;
+
+message FileChunk {
+  bytes content = 1;
+}
+
+message UploadStatus {
+  bool success = 1;
+}
+
+service ImageService {
+  rpc UploadImage (stream FileChunk) returns (UploadStatus);
+}

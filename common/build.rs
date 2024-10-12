@@ -6,7 +6,8 @@ use std::path::PathBuf;
 fn main() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
     let pdir = PathBuf::from(env::var("PROTO_OUT_DIR")?);
-    let pf = "proto/inventory.proto";
+    let invetory = "proto/inventory.proto";
+    let image = "proto/image.proto";
     tonic_build::configure()
         .build_server(true)
         .out_dir(pdir)
@@ -15,6 +16,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             "ProductStock",
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
-        .compile_protos(&[pf], &["."])?;
+        .compile_protos(&[invetory, image], &["."])?;
     Ok(())
 }
