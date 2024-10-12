@@ -1,4 +1,5 @@
 use actix_cors::Cors;
+use actix_multipart::Multipart;
 use actix_web::{
     body::MessageBody,
     cookie::{time::OffsetDateTime, Cookie, CookieBuilder, SameSite},
@@ -10,8 +11,14 @@ use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
-use common::inventory::GetStockRequest;
-use common::inventory::{inventory_service_client::InventoryServiceClient, UpdateStockRequest};
+use common::{
+    image_service::UploadStatus,
+    inventory::{inventory_service_client::InventoryServiceClient, UpdateStockRequest},
+};
+use common::{
+    image_service::{image_service_client::ImageServiceClient, FileChunk},
+    inventory::GetStockRequest,
+};
 use core::fmt;
 use futures_util::StreamExt;
 use jsonwebtoken::{
@@ -23,12 +30,16 @@ use serde_json::json;
 use sqlx::{postgres::PgListener, FromRow, PgPool};
 use std::{
     env,
+    fs::File,
+    io::BufReader,
+    io::Read,
     sync::{
         mpsc::{self, Receiver, Sender, TryRecvError},
         Arc, Mutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{
     metadata::{Ascii, MetadataValue},
     service::{interceptor::InterceptedService, Interceptor},
@@ -615,6 +626,11 @@ async fn main() -> std::io::Result<()> {
                     .route(web::get().to(orders_ws))
                     .wrap(from_fn(auth_middleware)),
             )
+            .service(
+                web::scope("/images")
+                    .route("/upload", web::post().to(upload))
+                    .route("/", web::get().to(image_hashes)),
+            )
             .route("/logout", web::get().to(logout))
             .wrap(Logger::default())
     })
@@ -624,6 +640,60 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await;
     factory_result
+}
+
+async fn upload(mut _payload: Multipart) -> Result<HttpResponse, Error> {
+    // i will just spawn client on each request for now
+    let mut client = ImageServiceClient::connect("http://[::1]:50052")
+        .await
+        .expect("failed to build image service client");
+    tracing::info!("build image service client");
+    match grpc_upload_file(&mut client).await {
+        Ok(status) => {
+            if status.success {
+                Ok(HttpResponse::Ok().finish())
+            } else {
+                Ok(HttpResponse::InternalServerError().finish())
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+const CHUNK_SIZE: usize = 1024 * 64;
+
+async fn grpc_upload_file(client: &mut ImageServiceClient<Channel>) -> Result<UploadStatus, Error> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<FileChunk>(4);
+    let path = "../image/largefile.bin".to_string();
+    let file = File::open(&path).expect("failed to open file");
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(file);
+        let mut buffer = vec![0; CHUNK_SIZE];
+        while let Ok(bytes_read) = reader.read(&mut buffer) {
+            tracing::info!("read {bytes_read} bytes");
+            if bytes_read == 0 {
+                tracing::info!("received 0");
+                break;
+            }
+            let chunk = FileChunk {
+                content: buffer[..bytes_read].to_vec(),
+            };
+            if tx.send(chunk).await.is_err() {
+                tracing::error!("failed to send chunk from tokio task");
+                break;
+            }
+        }
+    });
+    let stream = ReceiverStream::new(rx);
+    let response = client
+        .upload_image(stream)
+        .await
+        .map_err(|err| Error::Grpc(err.into()))?;
+    Ok(response.into_inner())
+}
+
+async fn image_hashes() -> impl Responder {
+    HttpResponse::Ok().body("todo")
 }
 
 async fn orders_ws(

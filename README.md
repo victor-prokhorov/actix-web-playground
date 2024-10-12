@@ -145,6 +145,30 @@ $ sha256sum dl-this-test.txt solid-grey.jpg
 ad44b97ba0ba348070341a02c2d8f720f92592f146df9dc0a873c8848e66ca66  dl-this-test.txt
 ad44b97ba0ba348070341a02c2d8f720f92592f146df9dc0a873c8848e66ca66  solid-grey.jpg
 ```
+- [tonic streaming example](https://github.com/hyperium/tonic/blob/master/examples/proto/echo/echo.proto)
+- [actix multipart](https://docs.rs/actix-multipart/latest/actix_multipart/)
+- stream file via grpc
+```sh
+$ curl -X POST https://127.0.0.1:3001/images/upload -F "file=@solid-grey.jpg"
+$ sha256sum solid-grey.jpg uploaded_image.bin
+ad44b97ba0ba348070341a02c2d8f720f92592f146df9dc0a873c8848e66ca66  solid-grey.jpg
+ad44b97ba0ba348070341a02c2d8f720f92592f146df9dc0a873c8848e66ca66  uploaded_image.bin
+```
+```sh
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:            14Gi       5.4Gi       1.8Gi       331Mi       7.8Gi       8.2Gi
+Swap:           32Gi          0B        32Gi
+
+$ dd if=/dev/urandom of=largefile.bin bs=1G count=14
+
+$ curl -X POST https://127.0.0.1:3001/images/upload -F "file=@largefile.bin"
+
+$ sha256sum largefile.bin uploaded_image.bin
+2fd849f9c7e393b5e6eaffec3c34580eacabba9c165c84627f48087c29753be3  largefile.bin
+2fd849f9c7e393b5e6eaffec3c34580eacabba9c165c84627f48087c29753be3  uploaded_image.bin
+
+```
 
 # fun things to try:
 

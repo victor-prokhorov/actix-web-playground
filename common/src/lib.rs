@@ -9,6 +9,9 @@ use uuid::Uuid;
 #[path = "./inventory/inventory.rs"]
 pub mod inventory;
 
+#[path = "./inventory/image_service.rs"]
+pub mod image_service;
+
 pub fn load_rustls_config() -> rustls::ServerConfig {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()

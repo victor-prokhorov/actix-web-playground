@@ -10,8 +10,8 @@ use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{config::Region, meta::PKG_VERSION, Client};
 use clap::Parser;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
-use std::{fs::File, path::Path};
 use tracing::trace;
 
 #[derive(Debug, Parser)]
@@ -39,7 +39,7 @@ struct Opt {
 
 /// https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_s3_code_examples.html
 async fn get_object(client: Client, bucket: &str, key: &str) -> Result<usize, anyhow::Error> {
-    let mut file = File::create("./dl-this-test.txt")?;
+    let mut file = std::fs::File::create("./dl-this-test.txt")?;
     let mut object = client.get_object().bucket(bucket).key(key).send().await?;
     let mut byte_count = 0_usize;
     while let Some(bytes) = object.body.try_next().await? {
@@ -113,8 +113,9 @@ async fn list_bucket_and_upload_object(
 ///    If not supplied, uses the value of the **AWS_REGION** environment variable.
 ///    If the environment variable is not set, defaults to **us-west-2**.
 /// * `[-v]` - Whether to display additional information.
-#[tokio::main]
-async fn main() -> Result<(), Error> {
+// #[tokio::main]
+/// `cargo watch -q -x 'r -- --bucket image-bucket --filename ./solid-grey.jpg --key solid-grey.jpg'`
+async fn not_main() -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -154,5 +155,48 @@ async fn main() -> Result<(), Error> {
     let s3_client = aws_sdk_s3::Client::from_conf(shared_config);
     list_bucket_and_upload_object(&s3_client, &bucket, &filename, &key).await?;
     get_object(s3_client, &bucket, &key).await?;
+    Ok(())
+}
+
+use common::image_service::image_service_server::*;
+use common::image_service::{FileChunk, UploadStatus};
+use futures::StreamExt;
+use tokio::io::AsyncWriteExt;
+use tonic::{transport::Server, Request, Response, Status};
+
+#[derive(Default)]
+pub struct Service;
+
+#[tonic::async_trait]
+impl ImageService for Service {
+    async fn upload_image(
+        &self,
+        request: Request<tonic::Streaming<FileChunk>>,
+    ) -> Result<Response<UploadStatus>, Status> {
+        let mut file = tokio::fs::File::create("uploaded_image.bin")
+            .await
+            .map_err(|e| Status::internal(format!("failed to create file: {}", e)))?;
+        println!("file were created");
+        let mut stream = request.into_inner();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            println!("received {}", chunk.content.len());
+            file.write_all(&chunk.content)
+                .await
+                .map_err(|e| Status::internal(format!("failed to write chunk: {}", e)))?;
+        }
+        println!("yup");
+        Ok(Response::new(UploadStatus { success: true }))
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let addr = "[::1]:50052".parse()?;
+    let image_service = Service::default();
+    Server::builder()
+        .add_service(ImageServiceServer::new(image_service))
+        .serve(addr)
+        .await?;
     Ok(())
 }
