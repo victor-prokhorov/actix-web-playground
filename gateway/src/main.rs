@@ -649,68 +649,43 @@ async fn main() -> std::io::Result<()> {
 }
 
 async fn upload(mut payload: Multipart) -> Result<HttpResponse, Error> {
-    // i will just spawn client on each request for now
-    let mut client = ImageServiceClient::connect("http://[::1]:50052")
-        .await
-        .expect("failed to build image service client");
-
-    tracing::info!("build image service client");
+    let (tx, rx) = tokio::sync::mpsc::channel::<FileChunk>(4);
     while let Some(Ok(mut field)) = payload.next().await {
-        tracing::info!("{field:?}");
+        tracing::info!("processing field: {:?}", field);
         while let Some(chunk) = field.next().await {
             let chunk = chunk.map_err(|e| {
-                tracing::error!("{e:?}");
-                Error::Upload("nope".into())
+                tracing::error!("failed to read chunk: {:?}", e);
+                Error::Upload("failed to read chunk".into())
             })?;
-            tracing::info!("received chunk of length: {}", chunk.len());
+            tracing::info!("Received chunk of length: {}", chunk.len());
+            let file_chunk = FileChunk {
+                content: chunk.to_vec(),
+            };
+            if tx.send(file_chunk).await.is_err() {
+                tracing::error!("failed to send");
+                break;
+            }
         }
     }
-    Ok(HttpResponse::Ok().finish())
-
-    // match grpc_upload_file(&mut client).await {
-    //     Ok(status) => {
-    //         if status.success {
-    //             Ok(HttpResponse::Ok().finish())
-    //         } else {
-    //             Ok(HttpResponse::InternalServerError().finish())
-    //         }
-    //     }
-    //     Err(e) => Err(e),
-    // }
-}
-
-const CHUNK_SIZE: usize = 1024 * 64;
-
-async fn _grpc_upload_file(
-    client: &mut ImageServiceClient<Channel>,
-) -> Result<UploadStatus, Error> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<FileChunk>(4);
-    let path = "../image/largefile.bin".to_string();
-    let file = File::open(&path).expect("failed to open file");
     tokio::spawn(async move {
-        let mut reader = BufReader::new(file);
-        let mut buffer = vec![0; CHUNK_SIZE];
-        while let Ok(bytes_read) = reader.read(&mut buffer) {
-            tracing::info!("read {bytes_read} bytes");
-            if bytes_read == 0 {
-                tracing::info!("received 0");
-                break;
-            }
-            let chunk = FileChunk {
-                content: buffer[..bytes_read].to_vec(),
-            };
-            if tx.send(chunk).await.is_err() {
-                tracing::error!("failed to send chunk from tokio task");
-                break;
-            }
+        tracing::info!("task spawned to drive grpc file upload");
+        if let Err(e) = grpc_upload_file(rx).await {
+            tracing::error!("upload failed: {:?}", e);
         }
     });
+    Ok(HttpResponse::Ok().finish())
+}
+
+async fn grpc_upload_file(rx: tokio::sync::mpsc::Receiver<FileChunk>) -> Result<(), GenericError> {
+    let mut client = ImageServiceClient::connect("http://[::1]:50052").await?;
     let stream = ReceiverStream::new(rx);
-    let response = client
-        .upload_image(stream)
-        .await
-        .map_err(|err| Error::Grpc(err.into()))?;
-    Ok(response.into_inner())
+    let response = client.upload_image(stream).await?;
+    if response.into_inner().success {
+        tracing::info!("upload succeeded");
+    } else {
+        tracing::warn!("upload failed");
+    }
+    Ok(())
 }
 
 async fn image_hashes() -> impl Responder {

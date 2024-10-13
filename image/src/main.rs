@@ -1,10 +1,3 @@
-// $ garage -c ./garage.toml status
-// ==== HEALTHY NODES ====
-// ID                Hostname  Address         Tags  Zone  Capacity   DataAvail
-// f3f676a26fe56979  pop-os    127.0.0.1:3901  []    dc1   1000.0 MB  183.7 GB (37.2%)
-//
-// Key ID: GK098e34fb7f80e87921fc9b72
-// Secret key: dd173761470b179f7354f513af0e699f460bb3d2e13647fe9fbe92e3b1ab8e99
 use anyhow::Error;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{config::Region, meta::PKG_VERSION, Client};
