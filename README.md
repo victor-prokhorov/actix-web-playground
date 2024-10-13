@@ -170,7 +170,7 @@ $ sha256sum largefile.bin uploaded_image.bin
 
 ```
 - [run garage from the docker and configure it remotely, real world scenario](https://garagehq.deuxfleurs.fr/documentation/cookbook/real-world/)
-- alias local `garage` bin to interact with remove
+- alias local `garage` bin to interact with remote
 - this time assign enough of memory for the streaming test `grg layout assign -z dc1 -c 32G c6a14b8d749b105d`
 ```sh
 $ grg key create image-app-key
@@ -189,6 +189,8 @@ Authorized buckets:
 ```text
 Warning: When using FormData to submit POST requests using XMLHttpRequest or the Fetch API with the multipart/form-data content type (e.g. when uploading files and blobs to the server), do not explicitly set the Content-Type header on the request.
 ```
+- [aws example on multipart upload](https://github.com/awsdocs/aws-doc-sdk-examples/blob/main/rustv1/examples/s3/src/bin/s3-multipart-upload.rs#L101)
+- [blog on rust s3 streaming](https://imfeld.dev/writing/rust_s3_streaming_upload)
 
 # fun things to try:
 

@@ -77,23 +77,23 @@ async fn list_bucket_and_upload_object(
             );
         }
     }
-    let body = aws_sdk_s3::primitives::ByteStream::from_path(filepath).await?;
-    let resp = client
-        .put_object()
-        .bucket(bucket)
-        .key(key)
-        .body(body)
-        .send()
-        .await?;
+    // let body = aws_sdk_s3::primitives::ByteStream::from_path(filepath).await?;
+    // let resp = client
+    //     .put_object()
+    //     .bucket(bucket)
+    //     .key(key)
+    //     .body(body)
+    //     .send()
+    //     .await?;
 
-    println!(
-        "Upload success. Version: {:?}",
-        resp.version_id()
-            .expect("S3 Object upload missing version ID")
-    );
-    let resp = client.get_object().bucket(bucket).key(key).send().await?;
-    println!("etag: {}", resp.e_tag().unwrap_or("(missing)"));
-    println!("version: {}", resp.version_id().unwrap_or("(missing)"));
+    // println!(
+    //     "Upload success. Version: {:?}",
+    //     resp.version_id()
+    //         .expect("S3 Object upload missing version ID")
+    // );
+    // let resp = client.get_object().bucket(bucket).key(key).send().await?;
+    // println!("etag: {}", resp.e_tag().unwrap_or("(missing)"));
+    // println!("version: {}", resp.version_id().unwrap_or("(missing)"));
     Ok(())
 }
 
@@ -151,10 +151,13 @@ async fn not_main() -> Result<(), Error> {
     Ok(())
 }
 
+use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadOutput;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::CompletedMultipartUpload;
+use aws_sdk_s3::types::CompletedPart;
 use common::image_service::image_service_server::*;
 use common::image_service::{FileChunk, UploadStatus};
 use futures::StreamExt;
-use tokio::io::AsyncWriteExt;
 use tonic::{transport::Server, Request, Response, Status};
 
 #[derive(Default)]
@@ -166,23 +169,81 @@ impl ImageService for Service {
         &self,
         request: Request<tonic::Streaming<FileChunk>>,
     ) -> Result<Response<UploadStatus>, Status> {
-        let mut file = tokio::fs::File::create("uploaded_image.bin")
+        println!("request to upload image received starting to process");
+        let bucket_name = "image-bucket";
+        let key = uuid::Uuid::new_v4().to_string();
+        let shared_config = aws_config::from_env()
+            .endpoint_url("http://localhost:3900")
+            .load()
+            .await;
+        let shared_config = Into::<aws_sdk_s3::config::Builder>::into(&shared_config)
+            .force_path_style(true)
+            .build();
+        let client = aws_sdk_s3::Client::from_conf(shared_config);
+        println!("client created");
+
+        // check if the client is actually working
+        list_bucket_and_upload_object(&client, &bucket_name, &PathBuf::from(""), &key)
             .await
-            .map_err(|e| Status::internal(format!("failed to create file: {}", e)))?;
-        println!("file were created");
+            .map_err(|e| Status::internal(format!("failed to read bucket: {}", e)))?;
+
+        let multipart_upload_res: CreateMultipartUploadOutput = client
+            .create_multipart_upload()
+            .bucket(bucket_name)
+            .key(key.clone())
+            .send()
+            .await
+            .map_err(|e| Status::internal(format!("failed to create multipart upload: {}", e)))?;
+        let upload_id = multipart_upload_res.upload_id().ok_or(Status::internal(
+            "missing upload_id after CreateMultipartUpload",
+        ))?;
+        let mut upload_parts: Vec<CompletedPart> = Vec::new();
+        let mut chunk_index = 0;
         let mut stream = request.into_inner();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            println!("received {}", chunk.content.len());
-            file.write_all(&chunk.content)
+            let chunk =
+                chunk.map_err(|e| Status::internal(format!("failed to read chunk: {}", e)))?;
+            println!("received chunk of size: {}", chunk.content.len());
+            let stream = ByteStream::from(chunk.content.clone());
+            let part_number = chunk_index + 1;
+            let upload_part_res = client
+                .upload_part()
+                .bucket(bucket_name)
+                .key(key.clone())
+                .upload_id(upload_id.to_string())
+                .part_number(part_number)
+                .body(stream)
+                .send()
                 .await
-                .map_err(|e| Status::internal(format!("failed to write chunk: {}", e)))?;
+                .map_err(|e| Status::internal(format!("failed to upload part: {}", e)))?;
+            upload_parts.push(
+                CompletedPart::builder()
+                    .e_tag(upload_part_res.e_tag.unwrap_or_default())
+                    .part_number(part_number)
+                    .build(),
+            );
+            chunk_index += 1;
+            println!("chunk index: {chunk_index}");
         }
-        println!("yup");
+        let completed_multipart_upload: CompletedMultipartUpload =
+            CompletedMultipartUpload::builder()
+                .set_parts(Some(upload_parts))
+                .build();
+        client
+            .complete_multipart_upload()
+            .bucket(bucket_name)
+            .key(key)
+            .upload_id(upload_id)
+            .multipart_upload(completed_multipart_upload)
+            .send()
+            .await
+            .map_err(|e| Status::internal(format!("failed to complete multipart upload: {}", e)))?;
+        println!("end of the reponse");
         Ok(Response::new(UploadStatus { success: true }))
     }
 }
 
+/// make sure to source .awsrc ! errors this would generate are not super clear
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50052".parse()?;

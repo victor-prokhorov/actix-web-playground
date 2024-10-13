@@ -678,6 +678,7 @@ async fn upload(mut payload: Multipart) -> Result<HttpResponse, Error> {
 
 async fn grpc_upload_file(rx: tokio::sync::mpsc::Receiver<FileChunk>) -> Result<(), GenericError> {
     let mut client = ImageServiceClient::connect("http://[::1]:50052").await?;
+    tracing::info!("succesfully connected to server");
     let stream = ReceiverStream::new(rx);
     let response = client.upload_image(stream).await?;
     if response.into_inner().success {
