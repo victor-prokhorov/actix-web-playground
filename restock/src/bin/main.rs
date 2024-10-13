@@ -1,14 +1,11 @@
 use futures::StreamExt;
 use lapin::{options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties};
-use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
 use std::fmt::Display;
 use std::thread;
 use std::time::Duration;
 
 #[derive(Debug)]
 enum Error {
-    CannotDecodeArg,
     MissingReplyTo,
     MissingCorrelationId,
 }
@@ -18,17 +15,10 @@ impl std::error::Error for Error {}
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::CannotDecodeArg => write!(f, "Cannot decode argument"),
             Error::MissingReplyTo => write!(f, "Missing 'reply to' property"),
             Error::MissingCorrelationId => write!(f, "Missing 'correlation id' property"),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-struct MyPayload {
-    id: u32,
-    message: String,
 }
 
 #[tokio::main]
@@ -57,20 +47,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Some(delivery) = consumer.next().await {
         if let Ok(delivery) = delivery {
-            let n = u64::from_le_bytes(
-                delivery
-                    .data
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::CannotDecodeArg)?,
-            );
             for done in 0..=10 {
                 println!("{}% done, working... thread sleep btw", done * 10);
                 thread::sleep(Duration::from_secs(1));
             }
-            // let response = fib(n);
-            // let payload = response.to_be_bytes();
-            let payload = MyPayload::default();
+            let payload = common::RestockResponse {
+                id: uuid::Uuid::parse_str("06fdd1be-5d59-41c2-8bcf-70bf279e83a3")?,
+                restocked_amount: 10,
+            };
             let serialized_payload = serde_json::to_vec(&payload)?;
 
             let routing_key = delivery

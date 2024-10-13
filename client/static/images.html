@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>images</title>
+    </head>
+    <body>
+        <h1>Upload a Large File</h1>
+        <form id="uploadForm" enctype="multipart/form-data" method="post">
+            <input type="file" id="fileInput" name="file" />
+            <button type="submit">Upload</button>
+        </form>
+        <script>
+            const BASE_URL = "https://127.0.0.1:3001/images";
+            const uploadForm = document.getElementById("uploadForm");
+            uploadForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const fileInput = document.getElementById("fileInput");
+                const file = fileInput.files[0];
+                if (!file) return;
+                const formData = new FormData();
+                formData.append("file", file);
+                try {
+                    const response = await fetch(BASE_URL + "/upload", {
+                        method: "POST",
+                        credentials: 'include',
+                        body: formData,
+                    });
+                    if (response.ok) {
+                        console.log("yup");
+                    } else {
+                        console.log("nope");
+                    }
+                } catch (error) {
+                    console.error('failed request to upload', error);
+                }
+            });
+        </script>
+    </body>
+</html>

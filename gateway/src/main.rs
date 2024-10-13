@@ -439,6 +439,7 @@ enum Error {
     Db(GenericError),
     Auth(GenericError),
     Grpc(GenericError),
+    Upload(GenericError),
 }
 
 impl fmt::Display for Error {
@@ -475,6 +476,10 @@ impl ResponseError for Error {
             }
             Error::Grpc(internal) => {
                 tracing::error!("{internal:?}");
+                HttpResponse::InternalServerError().finish()
+            }
+            Error::Upload(internal) => {
+                tracing::error!("upload error: {internal:?}");
                 HttpResponse::InternalServerError().finish()
             }
         }
@@ -544,6 +549,7 @@ async fn restock(app_data: web::Data<AppData>) -> Result<HttpResponse, actix_web
             .lock()
             .unwrap()
             .call(common::RestockRequest {
+                // seeded product_id, i use the hardcoded value for the test
                 id: Uuid::parse_str("06fdd1be-5d59-41c2-8bcf-70bf279e83a3").unwrap(),
                 desired_amount: 10,
             })
@@ -642,27 +648,42 @@ async fn main() -> std::io::Result<()> {
     factory_result
 }
 
-async fn upload(mut _payload: Multipart) -> Result<HttpResponse, Error> {
+async fn upload(mut payload: Multipart) -> Result<HttpResponse, Error> {
     // i will just spawn client on each request for now
     let mut client = ImageServiceClient::connect("http://[::1]:50052")
         .await
         .expect("failed to build image service client");
+
     tracing::info!("build image service client");
-    match grpc_upload_file(&mut client).await {
-        Ok(status) => {
-            if status.success {
-                Ok(HttpResponse::Ok().finish())
-            } else {
-                Ok(HttpResponse::InternalServerError().finish())
-            }
+    while let Some(Ok(mut field)) = payload.next().await {
+        tracing::info!("{field:?}");
+        while let Some(chunk) = field.next().await {
+            let chunk = chunk.map_err(|e| {
+                tracing::error!("{e:?}");
+                Error::Upload("nope".into())
+            })?;
+            tracing::info!("received chunk of length: {}", chunk.len());
         }
-        Err(e) => Err(e),
     }
+    Ok(HttpResponse::Ok().finish())
+
+    // match grpc_upload_file(&mut client).await {
+    //     Ok(status) => {
+    //         if status.success {
+    //             Ok(HttpResponse::Ok().finish())
+    //         } else {
+    //             Ok(HttpResponse::InternalServerError().finish())
+    //         }
+    //     }
+    //     Err(e) => Err(e),
+    // }
 }
 
 const CHUNK_SIZE: usize = 1024 * 64;
 
-async fn grpc_upload_file(client: &mut ImageServiceClient<Channel>) -> Result<UploadStatus, Error> {
+async fn _grpc_upload_file(
+    client: &mut ImageServiceClient<Channel>,
+) -> Result<UploadStatus, Error> {
     let (tx, rx) = tokio::sync::mpsc::channel::<FileChunk>(4);
     let path = "../image/largefile.bin".to_string();
     let file = File::open(&path).expect("failed to open file");

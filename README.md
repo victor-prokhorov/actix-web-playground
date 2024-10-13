@@ -169,6 +169,26 @@ $ sha256sum largefile.bin uploaded_image.bin
 2fd849f9c7e393b5e6eaffec3c34580eacabba9c165c84627f48087c29753be3  uploaded_image.bin
 
 ```
+- [run garage from the docker and configure it remotely, real world scenario](https://garagehq.deuxfleurs.fr/documentation/cookbook/real-world/)
+- alias local `garage` bin to interact with remove
+- this time assign enough of memory for the streaming test `grg layout assign -z dc1 -c 32G c6a14b8d749b105d`
+```sh
+$ grg key create image-app-key
+2024-10-12T17:59:20.890829Z  INFO garage_net::netapp: Connected to 127.0.0.1:3901, negotiating handshake...
+2024-10-12T17:59:20.932527Z  INFO garage_net::netapp: Connection established to c6a14b8d749b105d
+Key name: image-app-key
+Key ID: GK9c8c1eae131284d958414724
+Secret key: 4a8a7d97c82ebc46b64182bad0e38313280e736770fe508f923e8a1cb9b673f2
+Can create buckets: false
+
+Key-specific bucket aliases:
+
+Authorized buckets:
+```
+- [multipart data on mdn](https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest_API/Using_FormData_Objects)
+```text
+Warning: When using FormData to submit POST requests using XMLHttpRequest or the Fetch API with the multipart/form-data content type (e.g. when uploading files and blobs to the server), do not explicitly set the Content-Type header on the request.
+```
 
 # fun things to try:
 

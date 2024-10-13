@@ -1,27 +1,50 @@
-metadata_dir = "/tmp/meta"
-data_dir = "/tmp/data"
-db_engine = "sqlite"
+# metadata_dir = "/tmp/meta"
+# data_dir = "/tmp/data"
+# db_engine = "sqlite"
+# 
+# replication_factor = 1
+# 
+# rpc_bind_addr = "[::]:3901"
+# rpc_public_addr = "127.0.0.1:3901"
+# rpc_secret = "588a197da604107c2fa4c0cf4db7719178d22c82e680a6c973bd7f3db9f03c41"
+# 
+# [s3_api]
+# s3_region = "garage"
+# api_bind_addr = "[::]:3900"
+# root_domain = ".s3.garage.localhost"
+# 
+# [s3_web]
+# bind_addr = "[::]:3902"
+# root_domain = ".web.garage.localhost"
+# index = "index.html"
+# 
+# [k2v_api]
+# api_bind_addr = "[::]:3904"
+# 
+# [admin]
+# api_bind_addr = "[::]:3903"
+# admin_token = "hsnDp9g9VYwGaZlTh5rabHAnY5KnUAXx++a0JWOInMU="
+# metrics_token = "CFqQmdKEZ9RTmh4lbP5QrQ5u0ZqvSFxg+pa/mwZJr+c="
 
-replication_factor = 1
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+metadata_auto_snapshot_interval = "6h"
+
+replication_factor = 1 # i will still keep it 1
+
+compression_level = 2
 
 rpc_bind_addr = "[::]:3901"
-rpc_public_addr = "127.0.0.1:3901"
-rpc_secret = "588a197da604107c2fa4c0cf4db7719178d22c82e680a6c973bd7f3db9f03c41"
+# rpc_public_addr = "[::]:3901" # optional but recomended public ip
+rpc_secret = "d635f3f200e85f471425920d2771368381392c52ca4cc4e470df2998df027939"
 
 [s3_api]
 s3_region = "garage"
 api_bind_addr = "[::]:3900"
-root_domain = ".s3.garage.localhost"
+root_domain = ".s3.garage"
 
 [s3_web]
 bind_addr = "[::]:3902"
-root_domain = ".web.garage.localhost"
+root_domain = ".web.garage"
 index = "index.html"
-
-[k2v_api]
-api_bind_addr = "[::]:3904"
-
-[admin]
-api_bind_addr = "[::]:3903"
-admin_token = "hsnDp9g9VYwGaZlTh5rabHAnY5KnUAXx++a0JWOInMU="
-metrics_token = "CFqQmdKEZ9RTmh4lbP5QrQ5u0ZqvSFxg+pa/mwZJr+c="
