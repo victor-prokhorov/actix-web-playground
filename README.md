@@ -192,7 +192,7 @@ Warning: When using FormData to submit POST requests using XMLHttpRequest or the
 - [aws example on multipart upload](https://github.com/awsdocs/aws-doc-sdk-examples/blob/main/rustv1/examples/s3/src/bin/s3-multipart-upload.rs#L101)
 - [blog on rust s3 streaming](https://imfeld.dev/writing/rust_s3_streaming_upload)
 
-# fun things to try:
+# fun things to try with rust:
 
 - https://garagehq.deuxfleurs.fr/ open cloud object storage a la S3
 - distroless images
@@ -200,4 +200,7 @@ Warning: When using FormData to submit POST requests using XMLHttpRequest or the
 - BFF (backed for frontned)
 - searchable encryption
 - multi-key encryption (never access data)
+- [webrtc](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API)
+- [db indexing blog](https://blog.algomaster.io/p/a-detailed-guide-on-database-indexes)
+- [portable simd beginners guide on rust lang](https://github.com/rust-lang/portable-simd/blob/master/beginners-guide.md)
 
