@@ -52,8 +52,8 @@ async fn get_object(client: Client, bucket: &str, key: &str) -> Result<usize, an
 async fn list_bucket_and_upload_object(
     client: &aws_sdk_s3::Client,
     bucket: &str,
-    filepath: &Path,
-    key: &str,
+    _filepath: &Path,
+    _key: &str,
 ) -> Result<(), Error> {
     let mut objects = client
         .list_objects_v2()
@@ -181,7 +181,6 @@ impl ImageService for Service {
             .build();
         let client = aws_sdk_s3::Client::from_conf(shared_config);
         println!("client created");
-
         // check if the client is actually working
         list_bucket_and_upload_object(&client, &bucket_name, &PathBuf::from(""), &key)
             .await
@@ -248,6 +247,7 @@ impl ImageService for Service {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50052".parse()?;
     let image_service = Service::default();
+    println!("starting image service at {addr}");
     Server::builder()
         .add_service(ImageServiceServer::new(image_service))
         .serve(addr)
